@@ -188,14 +188,3 @@ class ProcessDonutTask(pipeBase.CmdLineTask):
                                help="data IDs, e.g. --id visit=12345 "
                                     "ccd=1,2^0,3")
         return parser
-
-    # Override/kill config/schema/meta/version output for the moment
-    def writeConfig(self, butler, clobber=False, doBackup=True):
-        pass
-    def writeSchemas(self, butler, clobber=False, doBackup=True):
-        pass
-    def writeMetadata(self, dataRef):
-        pass
-    def writePackageVersions(self, butler, clobber=False, doBackup=True,
-                             dataset="packages"):
-        pass

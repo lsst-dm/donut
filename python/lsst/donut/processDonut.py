@@ -23,7 +23,7 @@ from lsst.ip.isr import IsrTask
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
 from lsst.pipe.tasks.characterizeImage import CharacterizeImageTask
-from lsst.donut.donutFit import DonutFitTask
+from lsst.donut.fitDonut import FitDonutTask
 
 __all__ = ["ProcessDonutConfig", "ProcessDonutTask"]
 
@@ -52,8 +52,8 @@ class ProcessDonutConfig(pexConfig.Config):
               variance and mask planes
             """,
     )
-    donutFit = pexConfig.ConfigurableField(
-        target=DonutFitTask,
+    fitDonut = pexConfig.ConfigurableField(
+        target=FitDonutTask,
         doc="""Task to select and fit donuts:
             - Selects sources that look like donuts
             - Fit a wavefront forward model to donut images
@@ -95,7 +95,7 @@ class ProcessDonutTask(pipeBase.CmdLineTask):
     - Call isr to unpersist raw data and assemble it into a post-ISR exposure
     - Call charImage subtract background, repair cosmic rays, and detect and
       measure bright sources
-    - Call donutFit to fit Zernike wavefront models to donut images
+    - Call fitDonut to fit Zernike wavefront models to donut images
 
     @section pipe_tasks_processDonut_Initialize  Task initialisation
 
@@ -140,7 +140,7 @@ class ProcessDonutTask(pipeBase.CmdLineTask):
         self.makeSubtask("isr")
         self.makeSubtask("charImage", butler=butler,
                          refObjLoader=psfRefObjLoader)
-        self.makeSubtask("donutFit", schema=self.charImage.schema)
+        self.makeSubtask("fitDonut", schema=self.charImage.schema)
 
     @pipeBase.timeMethod
     def run(self, sensorRef):
@@ -166,7 +166,7 @@ class ProcessDonutTask(pipeBase.CmdLineTask):
             doUnpersist=False,
         )
 
-        donutRes = self.donutFit.run(sensorRef, charRes.sourceCat,
+        donutRes = self.fitDonut.run(sensorRef, charRes.sourceCat,
                                      charRes.exposure)
 
         return donutRes

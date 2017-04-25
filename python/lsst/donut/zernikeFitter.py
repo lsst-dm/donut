@@ -26,7 +26,7 @@ import galsim
 import numpy as np
 
 
-class ZernikeFit(object):
+class ZernikeFitter(object):
     """!Class to fit Zernike aberrations of donut images"""
     def __init__(self, maskedImage, pixelScale, ignoredPixelMask, zmax,
                  wavelength, pupil, diam, **kwargs):

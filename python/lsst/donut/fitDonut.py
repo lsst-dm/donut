@@ -34,10 +34,10 @@ import lsst.afw.table as afwTable
 import lsst.afw.math as afwMath
 import lsst.afw.image as afwImage
 import lsst.afw.geom as afwGeom
-from .zernikeFit import ZernikeFit
+from .zernikeFitter import ZernikeFitter
 
 
-class DonutFitConfig(pexConfig.Config):
+class FitDonutConfig(pexConfig.Config):
 
     zmax = pexConfig.ListField(
         dtype=int, default=(4, 11, 21),
@@ -133,13 +133,13 @@ class DonutFitConfig(pexConfig.Config):
         doc="Relative fitting range for donut flux.  [default: [0.8, 1.2]]"
     )
 
-class DonutFitTask(pipeBase.CmdLineTask):
+class FitDonutTask(pipeBase.CmdLineTask):
 
-    ConfigClass = DonutFitConfig
-    _DefaultName = "donutFit"
+    ConfigClass = FitDonutConfig
+    _DefaultName = "fitDonut"
 
     def __init__(self, schema=None, **kwargs):
-        """!Construct a DonutFitTask
+        """!Construct a FitDonutTask
         """
         pipeBase.Task.__init__(self, **kwargs)
         if schema is None:
@@ -199,12 +199,12 @@ class DonutFitTask(pipeBase.CmdLineTask):
             result = None
             for zmax in self.config.zmax:
                 self.log.info("Fitting with zmax = {}".format(zmax))
-                zfit = ZernikeFit(
+                zfitter = ZernikeFitter(
                         subMaskedImage, pixelScale,
                         self.config.ignoredPixelMask,
                         zmax, wavelength, pupil, diam,
                         xtol=self.config.fitTolerance)
-                zfit.initParams(
+                zfitter.initParams(
                         z4Init=self.config.z4Init,
                         z4Range=self.config.z4Range,
                         zRange=self.config.zRange,
@@ -213,13 +213,13 @@ class DonutFitTask(pipeBase.CmdLineTask):
                         centroidRange=self.config.centroidRange,
                         fluxRelativeRange=self.config.fluxRelativeRange)
                 if result is not None:
-                    zfit.params.update(result.params)
-                zfit.fit()
-                result = zfit.result
-                self.log.info(zfit.report(show_correl=False))
+                    zfitter.params.update(result.params)
+                zfitter.fit()
+                result = zfitter.result
+                self.log.info(zfitter.report(show_correl=False))
                 if display:
-                    data = zfit.image
-                    model = zfit.model(result.params)
+                    data = zfitter.image
+                    model = zfitter.model(result.params)
                     resid = data - model
                     mtv(afwImage.ImageD(data.astype(np.float64)),
                         frame=1, title="data")

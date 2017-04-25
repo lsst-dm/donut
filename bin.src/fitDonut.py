@@ -20,6 +20,6 @@
 # the GNU General Public License along with this program.  If not,
 # see <http://www.lsstcorp.org/LegalNotices/>.
 #
-from lsst.donut.donutFit import DonutFitTask
+from lsst.donut.fitDonut import FitDonutTask
 
-DonutFitTask.parseAndRun()
+FitDonutTask.parseAndRun()

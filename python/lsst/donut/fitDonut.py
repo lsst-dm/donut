@@ -35,9 +35,17 @@ import lsst.afw.math as afwMath
 import lsst.afw.image as afwImage
 import lsst.afw.geom as afwGeom
 from .zernikeFitter import ZernikeFitter
+from .selectDonut import SelectDonutTask
 
 
 class FitDonutConfig(pexConfig.Config):
+
+    selectDonut = pexConfig.ConfigurableField(
+        target=SelectDonutTask,
+        doc="""Task to select donuts:
+            - Selects sources that look like donuts
+            """,
+    )
 
     zmax = pexConfig.ListField(
         dtype=int, default=(4, 11, 21),
@@ -53,23 +61,6 @@ class FitDonutConfig(pexConfig.Config):
             "wavelength.",
         optional=True
     )
-
-    # Selection stuff to pull into separate task with better documentation.
-    r1cut = pexConfig.Field(
-        dtype=float, default=50.0,
-        doc="Rejection cut flux25/flux3 [default: 50.0]",
-    )
-
-    r2cut = pexConfig.Field(
-        dtype=float, default=1.05,
-        doc="Rejection cut flux35/flux25 [default: 1.05]",
-    )
-
-    snthresh = pexConfig.Field(
-        dtype=float, default=250.0,
-        doc="Donut signal-to-noise threshold [default: 250.0]",
-    )
-    # end selection stuff.
 
     stampSize = pexConfig.Field(
         dtype=int, default=57,
@@ -133,6 +124,7 @@ class FitDonutConfig(pexConfig.Config):
         doc="Relative fitting range for donut flux.  [default: [0.8, 1.2]]"
     )
 
+
 class FitDonutTask(pipeBase.CmdLineTask):
 
     ConfigClass = FitDonutConfig
@@ -141,7 +133,8 @@ class FitDonutTask(pipeBase.CmdLineTask):
     def __init__(self, schema=None, **kwargs):
         """!Construct a FitDonutTask
         """
-        pipeBase.Task.__init__(self, **kwargs)
+        pipeBase.CmdLineTask.__init__(self, **kwargs)
+        self.makeSubtask("selectDonut")
         if schema is None:
             schema = afwTable.SourceTable.makeMinimalSchema()
         self.schema = schema
@@ -182,8 +175,7 @@ class FitDonutTask(pipeBase.CmdLineTask):
         nquarter = icExp.getDetector().getOrientation().getNQuarter()
         if self.config.flip:
             nquarter += 2
-        select = self.selectDonuts(icSrc)
-        donutCat = icSrc.subset(select)
+        donutCat = self.selectDonut.run(icSrc)
 
         # for record in donutCat:
         for record in donutCat[0:1]:
@@ -269,29 +261,6 @@ class FitDonutTask(pipeBase.CmdLineTask):
         exp2 = int(np.ceil(np.log(n)/np.log(2)))
         exp3 = int(np.ceil((np.log(n) - np.log(3))/np.log(2)))
         return min(2**exp2, 3*2**exp3)
-
-    @pipeBase.timeMethod
-    def selectDonuts(self, icSrc):
-        s2n = (icSrc['base_CircularApertureFlux_25_0_flux'] /
-               icSrc['base_CircularApertureFlux_25_0_fluxSigma'])
-        rej1 = (icSrc['base_CircularApertureFlux_25_0_flux'] /
-                icSrc['base_CircularApertureFlux_3_0_flux'])
-        rej2 = (icSrc['base_CircularApertureFlux_35_0_flux'] /
-                icSrc['base_CircularApertureFlux_25_0_flux'])
-
-        select = (np.isfinite(s2n) &
-                  np.isfinite(rej1) &
-                  np.isfinite(rej2))
-        for i, s in enumerate(select):
-            if not s: continue
-            if ((s2n[i] < self.config.snthresh) |
-                (rej1[i] < self.config.r1cut) |
-                (rej2[i] > self.config.r2cut)):
-                select[i] = False
-        self.log.info(
-                ("Selected {} of {} detected donuts."
-                 .format(sum(select), len(select))))
-        return select
 
     @pipeBase.timeMethod
     def cutoutDonut(self, x, y, icExp):

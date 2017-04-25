@@ -20,9 +20,9 @@
 # see <https://www.lsstcorp.org/LegalNotices/>.
 #
 from __future__ import print_function, division
+from future.utils import iteritems
 
 import numpy as np
-
 from lsst.afw.display.ds9 import mtv
 import lsstDebug
 
@@ -138,13 +138,32 @@ class FitDonutTask(pipeBase.CmdLineTask):
         if schema is None:
             schema = afwTable.SourceTable.makeMinimalSchema()
         self.schema = schema
-        self.r0 = schema.addField("r0", type=float)
-        self.z = []
+        # Note that order of paramNames here must be consistent with order of
+        # lmfit.Parameters object setup in zernikeFitter
+        paramNames = ["r0", "dx", "dy", "flux"]
         for i in range(4, max(self.config.zmax)+1):
-            self.z.append(schema.addField("z{}".format(i), type=float))
-        self.bic = schema.addField("bic", type=float)
-        self.chisqr = schema.addField("chisqr", type=float)
-        self.redchi = schema.addField("redchi", type=float)
+            paramNames.append("z{}".format(i))
+        self.paramDict = {}
+        self.sigmaKeys = []
+        self.covKeys = []
+        for i, pi in enumerate(paramNames):
+            self.paramDict[pi] = schema.addField(pi, type=np.float32)
+            self.sigmaKeys.append(
+                    schema.addField(
+                            "{}Sigma".format(pi),
+                            type=np.float32,
+                            doc="uncertainty on {}".format(pi)))
+            for pj in paramNames[:i]:
+                self.covKeys.append(
+                        schema.addField(
+                                "{}_{}_Cov".format(pj, pi),
+                                type=np.float32,
+                                doc="{},{} covariance".format(pj, pi)))
+        self.covMatKey = afwTable.CovarianceMatrixXfKey(
+                self.sigmaKeys, self.covKeys)
+        self.bic = schema.addField("bic", type=np.float32)
+        self.chisqr = schema.addField("chisqr", type=np.float32)
+        self.redchi = schema.addField("redchi", type=np.float32)
 
     @pipeBase.timeMethod
     def run(self, sensorRef, icSrc=None, icExp=None):
@@ -223,9 +242,9 @@ class FitDonutTask(pipeBase.CmdLineTask):
                         frame=4, title="pupil")
                     raw_input("Press Enter to continue...")
             vals = result.params.valuesdict()
-            record.set(self.r0, vals['r0'])
-            for i, z in zip(range(4, max(self.config.zmax)+1), self.z):
-                record.set(z, vals['z{}'.format(i)])
+            for paramName, paramKey in iteritems(self.paramDict):
+                record.set(paramKey, vals[paramName])
+            record.set(self.covMatKey, result.covar.astype(np.float32))
             record.set(self.bic, result.bic)
             record.set(self.chisqr, result.chisqr)
             record.set(self.redchi, result.redchi)

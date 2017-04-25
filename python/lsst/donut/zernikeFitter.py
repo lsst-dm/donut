@@ -64,10 +64,9 @@ class ZernikeFitter(object):
                    centroidRange, fluxRelativeRange):
         """Initialize lmfit Parameters object.
         """
+        # Note that order of parameters here must be consistent with order of
+        # parameters in the fitDonut schema.
         params = lmfit.Parameters()
-        params.add('z4', z4Init, min=z4Range[0], max=z4Range[1])
-        for i in range(5, self.zmax+1):
-            params.add('z{}'.format(i), 0.0, min=zRange[0], max=zRange[1])
         params.add('r0', r0Init, min=r0Range[0], max=r0Range[1])
         params.add('dx', 0.0, min=centroidRange[0], max=centroidRange[1])
         params.add('dy', 0.0, min=centroidRange[0], max=centroidRange[1])
@@ -75,6 +74,9 @@ class ZernikeFitter(object):
         params.add('flux', flux,
                    min=fluxRelativeRange[0]*flux,
                    max=fluxRelativeRange[1]*flux)
+        params.add('z4', z4Init, min=z4Range[0], max=z4Range[1])
+        for i in range(5, self.zmax+1):
+            params.add('z{}'.format(i), 0.0, min=zRange[0], max=zRange[1])
         self.params = params
 
     def fit(self):

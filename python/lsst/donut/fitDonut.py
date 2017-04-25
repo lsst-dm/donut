@@ -196,8 +196,7 @@ class FitDonutTask(pipeBase.CmdLineTask):
             nquarter += 2
         donutCat = self.selectDonut.run(icSrc)
 
-        # for record in donutCat:
-        for record in donutCat[0:1]:
+        for record in donutCat:
             imX = record.getX()
             imY = record.getY()
             fpX = record['base_FPPosition_x']

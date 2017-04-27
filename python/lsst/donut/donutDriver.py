@@ -48,22 +48,17 @@ class DonutDriverTask(BatchParallelTask):
     _DefaultName = "donutDriver"
     RunnerClass = DonutTaskRunner
 
-    def __init__(self, butler=None, psfRefObjLoader=None, *args, **kwargs):
+    def __init__(self, butler=None, *args, **kwargs):
         """!
         Constructor
 
-        The psfRefObjLoader should be an instance of LoadReferenceObjectsTasks that supplies
-        an external reference catalog. They may be None if the butler argument is provided
-        or the particular reference catalog is not required.
-
         @param[in] butler  The butler is passed to the refObjLoader constructor in case it is
             needed.  Ignored if the refObjLoader argument provides a loader directly.
-        @param[in] psfRefObjLoader  Reference catalog loader for PSF determination.
         @param[in,out] kwargs  other keyword arguments for lsst.ctrl.pool.BatchParallelTask
         """
         BatchParallelTask.__init__(self, *args, **kwargs)
         self.ignoreCcds = set(self.config.ignoreCcdList)
-        self.makeSubtask("processDonut", butler=butler, psfRefObjLoader=psfRefObjLoader)
+        self.makeSubtask("processDonut", butler=butler)
 
     @classmethod
     def _makeArgumentParser(cls, *args, **kwargs):

@@ -122,24 +122,17 @@ class ProcessDonutTask(pipeBase.CmdLineTask):
     RunnerClass = pipeBase.ButlerInitializedTaskRunner
     _DefaultName = "processDonut"
 
-    def __init__(self, butler=None, psfRefObjLoader=None, **kwargs):
+    def __init__(self, butler=None, **kwargs):
         """!
         @param[in] butler  The butler is passed to the refObjLoader constructor
             in case it is needed.  Ignored if the refObjLoader argument
             provides a loader directly.
-        @param[in] psfRefObjLoader  An instance of LoadReferenceObjectsTasks
-            that supplies an external reference catalog for image
-            characterization.  An example of when this would be used is when a
-            CatalogStarSelector is used.  May be None if the desired loader can
-            be constructed from the butler argument or all steps requiring a
-            catalog are disabled.
         @param[in,out] kwargs  other keyword arguments for
             lsst.pipe.base.CmdLineTask
         """
         pipeBase.CmdLineTask.__init__(self, **kwargs)
         self.makeSubtask("isr")
-        self.makeSubtask("charImage", butler=butler,
-                         refObjLoader=psfRefObjLoader)
+        self.makeSubtask("charImage", butler=butler)
         self.makeSubtask("fitDonut", schema=self.charImage.schema)
 
     @pipeBase.timeMethod

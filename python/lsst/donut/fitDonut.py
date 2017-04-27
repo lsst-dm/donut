@@ -164,6 +164,8 @@ class FitDonutTask(pipeBase.CmdLineTask):
         self.bic = schema.addField("bic", type=np.float32)
         self.chisqr = schema.addField("chisqr", type=np.float32)
         self.redchi = schema.addField("redchi", type=np.float32)
+        self.success = schema.addField("success", type="Flag")
+        self.errorbars = schema.addField("errorbars", type="Flag")
 
     @pipeBase.timeMethod
     def run(self, sensorRef, icSrc=None, icExp=None):
@@ -196,12 +198,13 @@ class FitDonutTask(pipeBase.CmdLineTask):
             nquarter += 2
         donutCat = self.selectDonut.run(icSrc)
 
-        for record in donutCat:
+        for i, record in enumerate(donutCat):
+            self.log.info("Fitting donut {} of {}".format(i+1, len(donutCat)))
             imX = record.getX()
             imY = record.getY()
             fpX = record['base_FPPosition_x']
             fpY = record['base_FPPosition_y']
-            self.log.info("Fitting donut at {}, {}".format(fpX, fpY))
+            self.log.info("Donut is at {}, {}".format(fpX, fpY))
             subMaskedImage = afwMath.rotateImageBy90(
                     self.cutoutDonut(imX, imY, icExp), nquarter)
             pupil = pupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
@@ -240,13 +243,17 @@ class FitDonutTask(pipeBase.CmdLineTask):
                     mtv(afwImage.ImageD(pupil.illuminated.astype(np.float64)),
                         frame=4, title="pupil")
                     raw_input("Press Enter to continue...")
-            vals = result.params.valuesdict()
-            for paramName, paramKey in iteritems(self.paramDict):
-                record.set(paramKey, vals[paramName])
-            record.set(self.covMatKey, result.covar.astype(np.float32))
-            record.set(self.bic, result.bic)
-            record.set(self.chisqr, result.chisqr)
-            record.set(self.redchi, result.redchi)
+            record.set(self.success, result.success)
+            if result.success:
+                vals = result.params.valuesdict()
+                for paramName, paramKey in iteritems(self.paramDict):
+                    record.set(paramKey, vals[paramName])
+                record.set(self.bic, result.bic)
+                record.set(self.chisqr, result.chisqr)
+                record.set(self.redchi, result.redchi)
+                record.set(self.errorbars, bool(result.errorbars))
+                if result.errorbars:
+                    record.set(self.covMatKey, result.covar.astype(np.float32))
 
         sensorRef.put(donutCat, "donut")
 
@@ -270,7 +277,7 @@ class FitDonutTask(pipeBase.CmdLineTask):
         # So plug in the donut size for theta and return dL for the scale.
         pupilScale = wavelength * 1e-9 / (donutSize.asRadians())
         npix = self._getGoodFFTSize(pupilSize // pupilScale)
-        self.log.info("npix = {}".format(npix))
+        self.log.info("pupil npix = {}".format(npix))
         return pupilSize, npix
 
     @staticmethod

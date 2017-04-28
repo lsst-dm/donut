@@ -68,13 +68,6 @@ class ProcessDonutConfig(pexConfig.Config):
         self.charImage.doApCorr = False
         self.charImage.detection.doTempLocalBackground = False
 
-## \addtogroup LSST_task_documentation
-## \{
-## \page ProcessDonutTask
-## \ref ProcessDonutTask_ "ProcessDonutTask"
-## \copybrief ProcessDonutTask
-## \}
-
 
 class ProcessDonutTask(pipeBase.CmdLineTask):
     """!Assemble raw data, detect and fit donuts
@@ -158,22 +151,4 @@ class ProcessDonutTask(pipeBase.CmdLineTask):
         donutRes = self.fitDonut.run(sensorRef, charRes.sourceCat,
                                      charRes.exposure)
 
-        return donutRes
 
-    @classmethod
-    def _makeArgumentParser(cls):
-        """!Create and return an argument parser
-
-        @param[in] cls      the class object
-        @return the argument parser for this task.
-
-        This override is used to delay making the data ref list until the
-        dataset type is known; this is done in @ref parseAndRun.
-        """
-        parser = pipeBase.ArgumentParser(name=cls._DefaultName)
-        parser.add_id_argument(name="--id",
-                               datasetType=pipeBase.ConfigDatasetType(
-                                       name="isr.datasetType"),
-                               help="data IDs, e.g. --id visit=12345 "
-                                    "ccd=1,2^0,3")
-        return parser

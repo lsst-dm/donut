@@ -21,7 +21,6 @@
 #
 from __future__ import absolute_import, division, print_function
 
-from lsst.pipe.base import ArgumentParser, ConfigDatasetType
 from lsst.donut.processDonut import ProcessDonutTask
 from lsst.pex.config import Config, Field, ConfigurableField, ListField
 from lsst.ctrl.pool.parallel import BatchParallelTask
@@ -51,17 +50,6 @@ class DonutDriverTask(BatchParallelTask):
         BatchParallelTask.__init__(self, *args, **kwargs)
         self.ignoreCcds = set(self.config.ignoreCcdList)
         self.makeSubtask("processDonut")
-
-    @classmethod
-    def _makeArgumentParser(cls, *args, **kwargs):
-        kwargs.pop("doBatch", False)
-        parser = ArgumentParser(name="donutDriver", *args, **kwargs)
-        parser.add_id_argument("--id",
-                               datasetType=ConfigDatasetType(
-                                   name="processDonut.isr.datasetType"),
-                               level="sensor",
-                               help="data ID, e.g. --id visit=12345 ccd=67")
-        return parser
 
     def run(self, sensorRef):
         """Process a single CCD box of donuts, with scatter-gather-scatter using MPI.

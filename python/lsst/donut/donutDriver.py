@@ -21,10 +21,10 @@
 #
 from __future__ import absolute_import, division, print_function
 
-from lsst.pipe.base import ArgumentParser, ButlerInitializedTaskRunner, ConfigDatasetType
+from lsst.pipe.base import ArgumentParser, ConfigDatasetType
 from lsst.donut.processDonut import ProcessDonutTask
 from lsst.pex.config import Config, Field, ConfigurableField, ListField
-from lsst.ctrl.pool.parallel import BatchParallelTask, BatchTaskRunner
+from lsst.ctrl.pool.parallel import BatchParallelTask
 
 
 class DonutDriverConfig(Config):
@@ -36,29 +36,21 @@ class DonutDriverConfig(Config):
                    doc="DataId key corresponding to a single sensor")
 
 
-class DonutTaskRunner(BatchTaskRunner, ButlerInitializedTaskRunner):
-    """Run batches, and initialize Task using a butler"""
-    pass
-
-
 class DonutDriverTask(BatchParallelTask):
-    """Eat many donuts in parallel
+    """Fit donuts in parallel
     """
     ConfigClass = DonutDriverConfig
     _DefaultName = "donutDriver"
-    RunnerClass = DonutTaskRunner
 
-    def __init__(self, butler=None, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         """!
         Constructor
 
-        @param[in] butler  The butler is passed to the refObjLoader constructor in case it is
-            needed.  Ignored if the refObjLoader argument provides a loader directly.
         @param[in,out] kwargs  other keyword arguments for lsst.ctrl.pool.BatchParallelTask
         """
         BatchParallelTask.__init__(self, *args, **kwargs)
         self.ignoreCcds = set(self.config.ignoreCcdList)
-        self.makeSubtask("processDonut", butler=butler)
+        self.makeSubtask("processDonut")
 
     @classmethod
     def _makeArgumentParser(cls, *args, **kwargs):

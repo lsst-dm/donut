@@ -119,20 +119,16 @@ class ProcessDonutTask(pipeBase.CmdLineTask):
     Add the option `--help` to see more options.
     """
     ConfigClass = ProcessDonutConfig
-    RunnerClass = pipeBase.ButlerInitializedTaskRunner
     _DefaultName = "processDonut"
 
-    def __init__(self, butler=None, **kwargs):
+    def __init__(self, *args, **kwargs):
         """!
-        @param[in] butler  The butler is passed to the refObjLoader constructor
-            in case it is needed.  Ignored if the refObjLoader argument
-            provides a loader directly.
         @param[in,out] kwargs  other keyword arguments for
             lsst.pipe.base.CmdLineTask
         """
-        pipeBase.CmdLineTask.__init__(self, **kwargs)
+        pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
         self.makeSubtask("isr")
-        self.makeSubtask("charImage", butler=butler)
+        self.makeSubtask("charImage")
         self.makeSubtask("fitDonut", schema=self.charImage.schema)
 
     @pipeBase.timeMethod

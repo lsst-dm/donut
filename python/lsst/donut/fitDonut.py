@@ -125,7 +125,7 @@ class FitDonutConfig(pexConfig.Config):
     )
 
 
-class FitDonutTask(pipeBase.CmdLineTask):
+class FitDonutTask(pipeBase.Task):
 
     ConfigClass = FitDonutConfig
     _DefaultName = "fitDonut"
@@ -133,7 +133,7 @@ class FitDonutTask(pipeBase.CmdLineTask):
     def __init__(self, schema=None, **kwargs):
         """!Construct a FitDonutTask
         """
-        pipeBase.CmdLineTask.__init__(self, **kwargs)
+        pipeBase.Task.__init__(self, **kwargs)
         self.makeSubtask("selectDonut")
         if schema is None:
             schema = afwTable.SourceTable.makeMinimalSchema()
@@ -254,8 +254,6 @@ class FitDonutTask(pipeBase.CmdLineTask):
                 record.set(self.errorbars, bool(result.errorbars))
                 if result.errorbars:
                     record.set(self.covMatKey, result.covar.astype(np.float32))
-
-        sensorRef.put(donutCat, "donut")
 
         return donutCat
 

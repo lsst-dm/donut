@@ -22,7 +22,7 @@
 from lsst.ip.isr import IsrTask
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
-from lsst.pipe.tasks.characterizeImage import CharacterizeImageTask
+from lsst.donut.characterizeDonutImage import CharacterizeDonutImageTask
 from lsst.donut.fitDonut import FitDonutTask
 
 __all__ = ["ProcessDonutConfig", "ProcessDonutTask"]
@@ -41,13 +41,12 @@ class ProcessDonutConfig(pexConfig.Config):
             - provide a preliminary WCS
             """,
     )
-    charImage = pexConfig.ConfigurableField(
-        target=CharacterizeImageTask,
-        doc="""Task to characterize a science exposure:
+    charDonutImage = pexConfig.ConfigurableField(
+        target=CharacterizeDonutImageTask,
+        doc="""Task to characterize a donut exposure:
             - detect sources, usually at high S/N
             - estimate the background, which is subtracted from the image and
               returned as field "background"
-            - estimate a PSF model, which is added to the exposure
             - interpolate over defects and cosmic rays, updating the image,
               variance and mask planes
             """,
@@ -55,18 +54,16 @@ class ProcessDonutConfig(pexConfig.Config):
     fitDonut = pexConfig.ConfigurableField(
         target=FitDonutTask,
         doc="""Task to select and fit donuts:
-            - Selects sources that look like donuts
+            - Selects sources that look like isolated donuts
             - Fit a wavefront forward model to donut images
             """,
     )
 
     def setDefaults(self):
-        self.charImage.installSimplePsf.width = 61
-        self.charImage.installSimplePsf.fwhm = 20.0
-        self.charImage.detection.thresholdValue = 1.5
-        self.charImage.doMeasurePsf = False
-        self.charImage.doApCorr = False
-        self.charImage.detection.doTempLocalBackground = False
+        self.charDonutImage.installSimplePsf.width = 61
+        self.charDonutImage.installSimplePsf.fwhm = 20.0
+        self.charDonutImage.detection.thresholdValue = 1.5
+        self.charDonutImage.detection.doTempLocalBackground = False
 
 
 class ProcessDonutTask(pipeBase.CmdLineTask):
@@ -82,30 +79,30 @@ class ProcessDonutTask(pipeBase.CmdLineTask):
      - @ref pipe_tasks_processDonut_Config
      - @ref pipe_tasks_processDonut_Debug
 
-    @section pipe_tasks_processDonut_Purpose  Description
+    @section donut_processDonut_Purpose  Description
 
     Perform the following operations:
     - Call isr to unpersist raw data and assemble it into a post-ISR exposure
-    - Call charImage subtract background, repair cosmic rays, and detect and
-      measure bright sources
-    - Call fitDonut to fit Zernike wavefront models to donut images
+    - Call charDonutImage to subtract background, repair cosmic rays, and
+      detect and measure bright sources
+    - Call fitDonut to select and fit Zernike wavefront models to donut images
 
     @section pipe_tasks_processDonut_Initialize  Task initialisation
 
     @copydoc \_\_init\_\_
 
-    @section pipe_tasks_processDonut_IO  Invoking the Task
+    @section donut_processDonut_IO  Invoking the Task
 
     This task is primarily designed to be run from the command line.
 
     The main method is `run`, which takes a single butler data reference for
     the raw input data.
 
-    @section pipe_tasks_processDonut_Config  Configuration parameters
+    @section donut_processDonut_Config  Configuration parameters
 
     See @ref processDonutConfig
 
-    @section pipe_tasks_processDonut_Debug  Debug variables
+    @section donut_processDonut_Debug  Debug variables
 
     processDonutTask has no debug output, but its subtasks do.
 
@@ -121,8 +118,8 @@ class ProcessDonutTask(pipeBase.CmdLineTask):
         """
         pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
         self.makeSubtask("isr")
-        self.makeSubtask("charImage")
-        self.makeSubtask("fitDonut", schema=self.charImage.schema)
+        self.makeSubtask("charDonutImage")
+        self.makeSubtask("fitDonut", schema=self.charDonutImage.schema)
 
     @pipeBase.timeMethod
     def run(self, sensorRef):
@@ -136,13 +133,13 @@ class ProcessDonutTask(pipeBase.CmdLineTask):
         @param sensorRef: butler data reference for raw data
 
         @return pipe_base Struct containing these fields:
-        - donutCat : object returned by donut fitting task
+        - donutCat : SourceCatalog object returned by donut fitting task
         """
         self.log.info("Processing %s" % (sensorRef.dataId))
 
         exposure = self.isr.runDataRef(sensorRef).exposure
 
-        charRes = self.charImage.run(
+        charRes = self.charDonutImage.run(
             dataRef=sensorRef,
             exposure=exposure,
             doUnpersist=False,

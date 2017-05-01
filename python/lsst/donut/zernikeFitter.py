@@ -27,7 +27,21 @@ import numpy as np
 
 
 class ZernikeFitter(object):
-    """!Class to fit Zernike aberrations of donut images"""
+    """!Class to fit Zernike aberrations of donut images
+
+    The model is constructed using GalSim, and consists of the convolution of
+    an OpticalPSF and a Kolmogorov.  The OpticalPSF part includes the
+    specification of an arbitrary number of zernike wavefront aberrations.  For
+    now, the Kolmogorov part is isotropic.  The centroid and flux of the model
+    are also free parameters.
+
+    Note that to use the fitter, the parameters must be initialized with the
+    `.initParams` method, which sets initial parameter guesses and ranges.
+
+    To fit the model then use the `.fit` method which returns an
+    lmfit.MinimizerResult (and also become accessible through the .result)
+    attribute.
+    """
     def __init__(self, maskedImage, pixelScale, ignoredPixelMask, zmax,
                  wavelength, pupil, diam, **kwargs):
         """
@@ -63,6 +77,17 @@ class ZernikeFitter(object):
     def initParams(self, z4Init, z4Range, zRange, r0Init, r0Range,
                    centroidRange, fluxRelativeRange):
         """Initialize lmfit Parameters object.
+
+        @param z4Init   Initial Z4 aberration value in waves.
+        @param z4Range  2-tuple for allowed range of Z4 aberration in waves.
+        @param zRange   2-tuple for allowed range of Zernike aberrations higher
+                        than 4 in waves.
+        @param r0Init   Initial value for Fried parameter r0 in meters.
+        @param r0Range  2-tuple for allowed range of r0 in meters.
+        @param centroidRange  2-tuple for allowed range of centroid in pixels.
+                              Note this is the same for both x and y.
+        @param fluxRelativeRange  2-tuple for the allowed range of flux
+                                  relative to the pixel sum of the input image.
         """
         # Note that order of parameters here must be consistent with order of
         # parameters in the fitDonut schema.
@@ -81,17 +106,21 @@ class ZernikeFitter(object):
 
     def fit(self):
         """Do the fit
-        @returns  lmfit result.
+        @returns  result as an lmfit.MinimizerResult.
         """
-        self.result = lmfit.minimize(self.resid, self.params, **self.kwargs)
+        if not hasattr(self, 'params'):
+            raise ValueError("Must run .initParams() before running .fit()")
+        self.result = lmfit.minimize(self._chi, self.params, **self.kwargs)
         return self.result
 
-    def model(self, params):
+    def model(self, params=None):
         """Construct model image from parameters
 
-        @param params  lmfit.Parameters object
+        @param params  lmfit.Parameters object or None to use self.params
         @returns       numpy array image
         """
+        if params is None:
+            params = self.params
         v = params.valuesdict()
         aberrations = [0,0,0,0]
         for i in range(4, self.zmax+1):
@@ -108,7 +137,7 @@ class ZernikeFitter(object):
                                  scale=self.pixelScale)
         return modelImg.array
 
-    def resid(self, params):
+    def _chi(self, params):
         """Compute 'chi' image: (data - model)/sigma
 
         @param params  lmfit.Parameters object.

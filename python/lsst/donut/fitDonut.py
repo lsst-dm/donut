@@ -42,8 +42,10 @@ class FitDonutConfig(pexConfig.Config):
 
     selectDonut = pexConfig.ConfigurableField(
         target=SelectDonutTask,
-        doc="""Task to select donuts:
-            - Selects sources that look like donuts
+        doc="""Task to select donuts.  Should yield:
+            - stellar, not galactic, donuts,
+            - not blended donuts,
+            - High SNR donuts.
             """,
     )
 
@@ -76,12 +78,13 @@ class FitDonutConfig(pexConfig.Config):
 
     flip = pexConfig.Field(
         dtype=bool, default=False,
-        doc="Flip image 180 degrees to switch intra/extra focal fitting."
+        doc="Flip image 180 degrees to switch between fitting intra-focal and "
+            "extra-focal donuts."
     )
 
     fitTolerance = pexConfig.Field(
         dtype=float, default=1e-2,
-        doc="Relative error tolerance in fit parameters"
+        doc="Relative error tolerance in fit parameters for lmfit."
     )
 
     z4Init = pexConfig.Field(
@@ -126,7 +129,54 @@ class FitDonutConfig(pexConfig.Config):
 
 
 class FitDonutTask(pipeBase.Task):
+    """!Fit a donut images with a wavefront forward model.
 
+    @anchor FitDonutTask_
+
+    @section donut_FitDonut_Purpose  Description
+
+    Selects suitable donut images, and fits a forward model to them.  See the
+    task donut.zernikeFitter for more details about the model.
+
+    @section donut_FitDonut_IO  Invoking the Task
+
+    This task is intended for use as a subtask, primarily from processDonut.
+
+    You can execute the `run` method by supplying a sensorRef and optionally
+    that reference's `icSrc` and `icExp` datasets.
+
+    @section donut_FitDonut_Config  Configuration parameters
+
+    See @ref FitDonutConfig
+
+    @section donut_FitDonut_Debug  Debug variables
+
+    The @link lsst.pipe.base.cmdLineTask.CmdLineTask command line task@endlink
+    interface supports a flag `--debug` to import `debug.py` from your
+    `$PYTHONPATH`; see @ref baseDebug for more about `debug.py`.
+
+    FitDonutTask has a debug dictionary with the following key:
+    <dl>
+    <dt>display
+    <dd>bool; if True, then output donut, model, and residual images for each
+        donut being fit.
+    </dl>
+
+    For example, put something like:
+    @code{.py}
+        import lsstDebug
+        def DebugInfo(name):
+            di = lsstDebug.getInfo(name)
+            if name == "lsst.donut.FitDonut":
+                di.display = True
+
+            return di
+
+        lsstDebug.Info = DebugInfo
+    @endcode
+    into your `debug.py` file and run `processDonut.py` with the `--debug`
+    flag.
+    """
     ConfigClass = FitDonutConfig
     _DefaultName = "fitDonut"
 
@@ -258,7 +308,7 @@ class FitDonutTask(pipeBase.Task):
         return donutCat
 
     def _getGoodPupilShape(self, diam, wavelength, donutSize):
-        """!Estimate and appropriate size and shape for the pupil array.
+        """!Estimate an appropriate size and shape for the pupil array.
 
         @param[in]  diam    Diameter of aperture in meters.
         @param[in]  wavelength  Wavelength of light in nanometers.
@@ -287,6 +337,13 @@ class FitDonutTask(pipeBase.Task):
 
     @pipeBase.timeMethod
     def cutoutDonut(self, x, y, icExp):
+        """!Cut out a postage stamp image of a single donut
+
+        @param x  X-coordinate of postage stamp center
+        @param y  Y-coordinate of postage stamp center
+        @param icExp  Exposure from which to cutout stamp.
+        @returns  MaskedImage with cutout.
+        """
         point = afwGeom.Point2I(int(x), int(y))
         box = afwGeom.Box2I(point, point)
         box.grow(afwGeom.Extent2I(

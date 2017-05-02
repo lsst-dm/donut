@@ -221,8 +221,6 @@ class FitDonutTask(pipeBase.Task):
     def run(self, sensorRef, icSrc=None, icExp=None):
         """!Fit donuts
         """
-        diam = 8.2  # Ack!  Hardcoded for HSC for now.
-
         if icSrc is None:
             icSrc = sensorRef.get("icSrc")
         if icExp is None:
@@ -241,7 +239,9 @@ class FitDonutTask(pipeBase.Task):
         visitInfo = icExp.getInfo().getVisitInfo()
         camera = sensorRef.get("camera")
         pupilSize, npix = self._getGoodPupilShape(
-                diam, wavelength, self.config.stampSize*pixelScale)
+                camera.telescopeDiameter,
+                wavelength,
+                self.config.stampSize*pixelScale)
         pupilFactory = camera.getPupilFactory(visitInfo, pupilSize, npix)
         nquarter = icExp.getDetector().getOrientation().getNQuarter()
         if self.config.flip:
@@ -265,7 +265,7 @@ class FitDonutTask(pipeBase.Task):
                 zfitter = ZernikeFitter(
                         subMaskedImage, pixelScale,
                         self.config.ignoredPixelMask,
-                        zmax, wavelength, pupil, diam,
+                        zmax, wavelength, pupil, camera.telescopeDiameter,
                         xtol=self.config.fitTolerance)
                 zfitter.initParams(
                         z4Init=self.config.z4Init,

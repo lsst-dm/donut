@@ -182,7 +182,7 @@ class CharacterizeDonutImageTask(pipeBase.CmdLineTask):
         import lsstDebug
         def DebugInfo(name):
             di = lsstDebug.getInfo(name)
-            if name == "lsst.pipe.tasks.characterizeDonutImage":
+            if name == "lsst.donut.characterizeDonutImage":
                 di.display = dict(
                     repair = True,
                 )
@@ -360,19 +360,13 @@ class CharacterizeDonutImageTask(pipeBase.CmdLineTask):
         """!Perform one iteration of detect, measure and estimate PSF
 
         Performs the following operations:
-        - if config.doMeasurePsf or not exposure.hasPsf():
-            - install a simple PSF model (replacing the existing one, if need
-              be)
         - interpolate over cosmic rays with keepCRs=True
         - estimate background and subtract it from the exposure
         - detect and measure sources, and subtract a refined background model;
-        - if config.doMeasurePsf:
-            - measure PSF
 
         @param[in,out] exposure  exposure to characterize (an
             lsst.afw.image.ExposureF or similar)
             The following changes are made:
-            - update or set psf
             - update detection and cosmic ray mask planes
             - subtract background
         @param[in] exposureIdInfo  ID info for exposure (an

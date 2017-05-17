@@ -111,12 +111,14 @@ class FitDonutConfig(pexConfig.Config):
     centroidRange = pexConfig.ListField(
         dtype = float,
         default = [-2.0, 2.0],
-        doc = "Fitting range for donut centroid in pixels"
+        doc = "Fitting range for donut centroid in pixels with respect to "
+              "stamp center"
     )
     fluxRelativeRange = pexConfig.ListField(
         dtype = float,
         default = [0.8, 1.2],
-        doc = "Relative fitting range for donut flux"
+        doc = "Relative fitting range for donut flux with respect to stamp "
+              "pixel sum"
     )
 
 
@@ -203,11 +205,11 @@ class FitDonutTask(pipeBase.Task):
                         doc = "{},{} covariance".format(pj, pi)))
         self.covMatKey = afwTable.CovarianceMatrixXfKey(
             self.sigmaKeys, self.covKeys)
-        self.bic = schema.addField("bic", type=np.float32)
-        self.chisqr = schema.addField("chisqr", type=np.float32)
-        self.redchi = schema.addField("redchi", type=np.float32)
-        self.success = schema.addField("success", type="Flag")
-        self.errorbars = schema.addField("errorbars", type="Flag")
+        self.bicKey = schema.addField("bic", type=np.float32)
+        self.chisqrKey = schema.addField("chisqr", type=np.float32)
+        self.redchiKey = schema.addField("redchi", type=np.float32)
+        self.successKey = schema.addField("success", type="Flag")
+        self.errorbarsKey = schema.addField("errorbars", type="Flag")
 
     @pipeBase.timeMethod
     def run(self, sensorRef, icSrc=None, icExp=None):
@@ -238,11 +240,11 @@ class FitDonutTask(pipeBase.Task):
         nquarter = icExp.getDetector().getOrientation().getNQuarter()
         if self.config.flip:
             nquarter += 2
-        donutCat = self.selectDonut.run(icSrc)
+        donutSrc = self.selectDonut.run(icSrc)
 
-        for i, record in enumerate(donutCat):
+        for i, record in enumerate(donutSrc):
             self.log.info("Fitting donut {} of {}".format(
-                i + 1, len(donutCat)))
+                i + 1, len(donutSrc)))
             imX = record.getX()
             imY = record.getY()
             fpX = record['base_FPPosition_x']
@@ -272,33 +274,22 @@ class FitDonutTask(pipeBase.Task):
                     zfitter.params.update(result.params)
                 zfitter.fit()
                 result = zfitter.result
-                self.log.info(zfitter.report(show_correl=False))
+                self.log.debug(zfitter.report(show_correl=False))
                 if display:
-                    data = zfitter.image
-                    model = zfitter.model(result.params)
-                    resid = data - model
-                    mtv(afwImage.ImageD(data.astype(np.float64)),
-                        frame = 1, title = "data")
-                    mtv(afwImage.ImageD(model.astype(np.float64)),
-                        frame = 2, title = "model")
-                    mtv(afwImage.ImageD(resid.astype(np.float64)),
-                        frame = 3, title = "resid")
-                    mtv(afwImage.ImageD(pupil.illuminated.astype(np.float64)),
-                        frame = 4, title = "pupil")
-                    raw_input("Press Enter to continue...")
-            record.set(self.success, result.success)
+                    self.displayFitter(zfitter, pupil)
+            record.set(self.successKey, result.success)
             if result.success:
                 vals = result.params.valuesdict()
                 for paramName, paramKey in iteritems(self.paramDict):
                     record.set(paramKey, vals[paramName])
-                record.set(self.bic, result.bic)
-                record.set(self.chisqr, result.chisqr)
-                record.set(self.redchi, result.redchi)
-                record.set(self.errorbars, bool(result.errorbars))
+                record.set(self.bicKey, result.bic)
+                record.set(self.chisqrKey, result.chisqr)
+                record.set(self.redchiKey, result.redchi)
+                record.set(self.errorbarsKey, bool(result.errorbars))
                 if result.errorbars:
                     record.set(self.covMatKey, result.covar.astype(np.float32))
 
-        return donutCat
+        return pipeBase.Struct(donutSrc=donutSrc)
 
     def _getGoodPupilShape(self, diam, wavelength, donutSize):
         """!Estimate an appropriate size and shape for the pupil array.
@@ -316,7 +307,7 @@ class FitDonutTask(pipeBase.Task):
         # dL = lambda / theta
         # L = lambda / dtheta
         # So plug in the donut size for theta and return dL for the scale.
-        pupilScale = wavelength*1e-9/(donutSize.asRadians())
+        pupilScale = wavelength*1e-9/(donutSize.asRadians())  # meters
         npix = self._getGoodFFTSize(pupilSize//pupilScale)
         self.log.info("pupil npix = {}".format(npix))
         return pupilSize, npix
@@ -328,7 +319,6 @@ class FitDonutTask(pipeBase.Task):
         exp3 = int(np.ceil((np.log(n) - np.log(3))/np.log(2)))
         return min(2**exp2, 3*2**exp3)
 
-    @pipeBase.timeMethod
     def cutoutDonut(self, x, y, icExp):
         """!Cut out a postage stamp image of a single donut
 
@@ -348,3 +338,17 @@ class FitDonutTask(pipeBase.Task):
             afwImage.PARENT
         )
         return subMaskedImage
+
+    def displayFitter(self, zfitter, pupil):
+        data = zfitter.image
+        model = zfitter.model(zfitter.result.params)
+        resid = data - model
+        mtv(afwImage.ImageD(data.astype(np.float64)),
+            frame = 1, title = "data")
+        mtv(afwImage.ImageD(model.astype(np.float64)),
+            frame = 2, title = "model")
+        mtv(afwImage.ImageD(resid.astype(np.float64)),
+            frame = 3, title = "resid")
+        mtv(afwImage.ImageD(pupil.illuminated.astype(np.float64)),
+            frame = 4, title = "pupil")
+        raw_input("Press Enter to continue...")

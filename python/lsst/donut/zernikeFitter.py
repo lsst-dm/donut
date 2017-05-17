@@ -55,16 +55,13 @@ class ZernikeFitter(object):
         @param diam        Pupil diameter.
         @param **kwargs    Additional kwargs to pass to lmfit.minimize.
         """
-        self.image = maskedImage.getImage().getArray()
-        self.sigma = np.sqrt(maskedImage.getVariance().getArray())
-        mask = maskedImage.getMask()
+        self.maskedImage = maskedImage
+        mask = self.maskedImage.getMask()
         bitmask = reduce(lambda x, y: x | mask.getPlaneBitMask(y),
                          ignoredPixelMask, 0x0)
         self.good = (
             np.bitwise_and(mask.getArray().astype(np.uint16), bitmask) == 0)
-        self.shape = self.image.shape
         self.pixelScale = pixelScale.asArcseconds()
-
         self.zmax = zmax
         self.wavelength = wavelength
         self.aper = galsim.Aperture(
@@ -95,7 +92,8 @@ class ZernikeFitter(object):
         params.add('r0', r0Init, min=r0Range[0], max=r0Range[1])
         params.add('dx', 0.0, min=centroidRange[0], max=centroidRange[1])
         params.add('dy', 0.0, min=centroidRange[0], max=centroidRange[1])
-        flux = float(np.sum(self.image))
+        image = self.maskedImage.getImage().getArray()
+        flux = float(np.sum(image))
         params.add('flux', flux,
                    min = fluxRelativeRange[0]*flux,
                    max = fluxRelativeRange[1]*flux)
@@ -113,7 +111,7 @@ class ZernikeFitter(object):
         self.result = lmfit.minimize(self._chi, self.params, **self.kwargs)
         return self.result
 
-    def model(self, params=None):
+    def constructModelImage(self, params=None):
         """Construct model image from parameters
 
         @param params  lmfit.Parameters object or None to use self.params
@@ -132,9 +130,10 @@ class ZernikeFitter(object):
         atmPsf = galsim.Kolmogorov(lam=self.wavelength, r0=v['r0'])
         psf = (galsim.Convolve(optPsf, atmPsf)
                .shift(v['dx'], v['dy'])*v['flux'])
+        shape = self.maskedImage.getImage().getArray().shape
         modelImg = psf.drawImage(
-            nx = self.shape[0],
-            ny = self.shape[1],
+            nx = shape[0],
+            ny = shape[1],
             scale = self.pixelScale)
         return modelImg.array
 
@@ -144,8 +143,10 @@ class ZernikeFitter(object):
         @param params  lmfit.Parameters object.
         @returns       Unraveled chi vector.
         """
-        modelImg = self.model(params)
-        chi = (self.image - modelImg)/self.sigma
+        modelImg = self.constructModelImage(params)
+        image = self.maskedImage.getImage().getArray()
+        sigma = self.maskedImage.getVariance().getArray()
+        chi = (image - modelImg)/sigma
         return chi[self.good].ravel()
 
     def report(self, *args, **kwargs):

@@ -165,9 +165,9 @@ class ProcessDonutTask(pipeBase.CmdLineTask):
             doUnpersist = False,
         )
 
-        donutCat = self.fitDonut.run(sensorRef, charRes.sourceCat,
+        donutRes = self.fitDonut.run(sensorRef, charRes.sourceCat,
                                      charRes.exposure)
 
-        sensorRef.put(donutCat, "donut")
+        sensorRef.put(donutRes.donutSrc, "donutSrc")
 
-        return pipeBase.Struct(donutCat=donutCat)
+        return pipeBase.Struct(donutSrc=donutRes.donutSrc)

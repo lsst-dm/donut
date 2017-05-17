@@ -22,8 +22,8 @@
 from lsst.ip.isr import IsrTask
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
-from lsst.donut.characterizeDonutImage import CharacterizeDonutImageTask
 from lsst.donut.fitDonut import FitDonutTask
+from lsst.pipe.tasks.characterizeImage import CharacterizeImageTask
 
 __all__ = ["ProcessDonutConfig", "ProcessDonutTask"]
 
@@ -41,8 +41,8 @@ class ProcessDonutConfig(pexConfig.Config):
             - provide a preliminary WCS
             """,
     )
-    charDonutImage = pexConfig.ConfigurableField(
-        target=CharacterizeDonutImageTask,
+    charImage = pexConfig.ConfigurableField(
+        target=CharacterizeImageTask,
         doc="""Task to characterize a donut exposure:
             - detect sources, usually at high S/N
             - estimate the background, which is subtracted from the image and
@@ -60,10 +60,27 @@ class ProcessDonutConfig(pexConfig.Config):
     )
 
     def setDefaults(self):
-        self.charDonutImage.installSimplePsf.width = 61
-        self.charDonutImage.installSimplePsf.fwhm = 20.0
-        self.charDonutImage.detection.thresholdValue = 1.5
-        self.charDonutImage.detection.doTempLocalBackground = False
+        self.charImage.doMeasurePsf = False
+        self.charImage.psfIterations = 1
+        self.charImage.doApCorr = False
+        self.charImage.measurement.plugins.names = [
+            "base_PixelFlags",
+            "base_SdssCentroid",
+            "base_SdssShape",
+            "base_GaussianFlux",
+            "base_PsfFlux",
+            "base_CircularApertureFlux",
+            "base_FPPosition",
+        ]
+        self.charImage.installSimplePsf.width = 61
+        self.charImage.installSimplePsf.fwhm = 20.0
+        self.charImage.detection.thresholdValue = 1.5
+        self.charImage.detection.doTempLocalBackground = False
+
+    def validate(self):
+        pexConfig.Config.validate(self)
+        if self.charImage.doMeasurePsf:
+            raise ValueError("Cannot measure PSFs on out of focus images.")
 
 
 class ProcessDonutTask(pipeBase.CmdLineTask):
@@ -83,7 +100,7 @@ class ProcessDonutTask(pipeBase.CmdLineTask):
 
     Perform the following operations:
     - Call isr to unpersist raw data and assemble it into a post-ISR exposure
-    - Call charDonutImage to subtract background, repair cosmic rays, and
+    - Call charImage to subtract background, repair cosmic rays, and
       detect and measure bright sources
     - Call fitDonut to select and fit Zernike wavefront models to donut images
 
@@ -118,8 +135,8 @@ class ProcessDonutTask(pipeBase.CmdLineTask):
         """
         pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
         self.makeSubtask("isr")
-        self.makeSubtask("charDonutImage")
-        self.makeSubtask("fitDonut", schema=self.charDonutImage.schema)
+        self.makeSubtask("charImage")
+        self.makeSubtask("fitDonut", schema=self.charImage.schema)
 
     @pipeBase.timeMethod
     def run(self, sensorRef):
@@ -139,7 +156,7 @@ class ProcessDonutTask(pipeBase.CmdLineTask):
 
         exposure = self.isr.runDataRef(sensorRef).exposure
 
-        charRes = self.charDonutImage.run(
+        charRes = self.charImage.run(
             dataRef=sensorRef,
             exposure=exposure,
             doUnpersist=False,

@@ -1,9 +1,10 @@
 #
 # LSST Data Management System
-# Copyright 2008-2017 AURA/LSST.
 #
 # This product includes software developed by the
 # LSST Project (http://www.lsst.org/).
+#
+# See COPYRIGHT file at the top of the source tree.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by

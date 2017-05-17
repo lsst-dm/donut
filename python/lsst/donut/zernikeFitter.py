@@ -60,19 +60,18 @@ class ZernikeFitter(object):
         mask = maskedImage.getMask()
         bitmask = reduce(lambda x, y: x | mask.getPlaneBitMask(y),
                          ignoredPixelMask, 0x0)
-        self.good = (np.bitwise_and(mask.getArray().astype(np.uint16), bitmask)
-                     == 0)
+        self.good = (
+            np.bitwise_and(mask.getArray().astype(np.uint16), bitmask) == 0)
         self.shape = self.image.shape
         self.pixelScale = pixelScale.asArcseconds()
 
         self.zmax = zmax
         self.wavelength = wavelength
         self.aper = galsim.Aperture(
-                diam=diam,
-                pupil_plane_im=pupil.illuminated.astype(np.int16),
-                pupil_plane_scale=pupil.scale,
-                pupil_plane_size=pupil.size)
-
+            diam = diam,
+            pupil_plane_im = pupil.illuminated.astype(np.int16),
+            pupil_plane_scale = pupil.scale,
+            pupil_plane_size = pupil.size)
         self.kwargs = kwargs
 
     def initParams(self, z4Init, z4Range, zRange, r0Init, r0Range,
@@ -98,8 +97,8 @@ class ZernikeFitter(object):
         params.add('dy', 0.0, min=centroidRange[0], max=centroidRange[1])
         flux = float(np.sum(self.image))
         params.add('flux', flux,
-                   min=fluxRelativeRange[0]*flux,
-                   max=fluxRelativeRange[1]*flux)
+                   min = fluxRelativeRange[0]*flux,
+                   max = fluxRelativeRange[1]*flux)
         params.add('z4', z4Init, min=z4Range[0], max=z4Range[1])
         for i in range(5, self.zmax+1):
             params.add('z{}'.format(i), 0.0, min=zRange[0], max=zRange[1])
@@ -123,19 +122,20 @@ class ZernikeFitter(object):
         if params is None:
             params = self.params
         v = params.valuesdict()
-        aberrations = [0,0,0,0]
-        for i in range(4, self.zmax+1):
+        aberrations = [0, 0, 0, 0]
+        for i in range(4, self.zmax + 1):
             aberrations.append(v['z{}'.format(i)])
-        optPsf = galsim.OpticalPSF(lam=self.wavelength,
-                                   diam=self.aper.diam,
-                                   aper=self.aper,
-                                   aberrations=aberrations)
+        optPsf = galsim.OpticalPSF(lam = self.wavelength,
+                                   diam = self.aper.diam,
+                                   aper = self.aper,
+                                   aberrations = aberrations)
         atmPsf = galsim.Kolmogorov(lam=self.wavelength, r0=v['r0'])
         psf = (galsim.Convolve(optPsf, atmPsf)
-               .shift(v['dx'], v['dy'])
-               * v['flux'])
-        modelImg = psf.drawImage(nx=self.shape[0], ny=self.shape[1],
-                                 scale=self.pixelScale)
+               .shift(v['dx'], v['dy'])*v['flux'])
+        modelImg = psf.drawImage(
+            nx = self.shape[0],
+            ny = self.shape[1],
+            scale = self.pixelScale)
         return modelImg.array
 
     def _chi(self, params):
@@ -145,7 +145,7 @@ class ZernikeFitter(object):
         @returns       Unraveled chi vector.
         """
         modelImg = self.model(params)
-        chi = (self.image - modelImg) / self.sigma
+        chi = (self.image - modelImg)/self.sigma
         return chi[self.good].ravel()
 
     def report(self, *args, **kwargs):

@@ -31,16 +31,19 @@ import lsst.pipe.base as pipeBase
 class SelectDonutConfig(pexConfig.Config):
     """Config for SelectDonut"""
     r1cut = pexConfig.Field(
-        dtype=float, default=50.0,
-        doc="Rejection cut flux25/flux3 [default: 50.0]",
+        dtype = float,
+        default = 50.0,
+        doc = "Rejection cut flux25/flux3"
     )
     r2cut = pexConfig.Field(
-        dtype=float, default=1.05,
-        doc="Rejection cut flux35/flux25 [default: 1.05]",
+        dtype = float,
+        default = 1.05,
+        doc = "Rejection cut flux35/flux25"
     )
     snthresh = pexConfig.Field(
-        dtype=float, default=250.0,
-        doc="Donut signal-to-noise threshold [default: 250.0]",
+        dtype = float,
+        default = 250.0,
+        doc = "Donut signal-to-noise threshold"
     )
 
 
@@ -105,13 +108,14 @@ class SelectDonutTask(pipeBase.Task):
                   np.isfinite(rej1) &
                   np.isfinite(rej2))
         for i, s in enumerate(select):
-            if not s: continue
-            if ((s2n[i] < self.config.snthresh) |
-                (rej1[i] < self.config.r1cut) |
-                (rej2[i] > self.config.r2cut)):
+            if not s:
+                continue
+            if (((s2n[i] < self.config.snthresh) |
+                 (rej1[i] < self.config.r1cut) |
+                 (rej2[i] > self.config.r2cut))):
                 select[i] = False
         self.log.info(
-                ("Selected {} of {} detected donuts."
-                 .format(sum(select), len(select))))
+            ("Selected {} of {} detected donuts."
+             .format(sum(select), len(select))))
 
         return icSrc.subset(select)

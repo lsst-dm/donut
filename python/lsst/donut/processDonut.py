@@ -34,32 +34,32 @@ __all__ = ["ProcessDonutConfig", "ProcessDonutTask"]
 class ProcessDonutConfig(pexConfig.Config):
     """Config for ProcessDonut"""
     isr = pexConfig.ConfigurableField(
-        target=IsrTask,
-        doc="""Task to perform instrumental signature removal or load a
-            post-ISR image; ISR consists of:
-            - assemble raw amplifier images into an exposure with image,
-              variance and mask planes
-            - perform bias subtraction, flat fielding, etc.
-            - mask known bad pixels
-            - provide a preliminary WCS
-            """,
+        target = IsrTask,
+        doc = """Task to perform instrumental signature removal or load a
+              post-ISR image; ISR consists of:
+              - assemble raw amplifier images into an exposure with image,
+                variance and mask planes
+              - perform bias subtraction, flat fielding, etc.
+              - mask known bad pixels
+              - provide a preliminary WCS
+              """
     )
     charImage = pexConfig.ConfigurableField(
-        target=CharacterizeImageTask,
-        doc="""Task to characterize a donut exposure:
-            - detect sources, usually at high S/N
-            - estimate the background, which is subtracted from the image and
-              returned as field "background"
-            - interpolate over defects and cosmic rays, updating the image,
-              variance and mask planes
-            """,
+        target = CharacterizeImageTask,
+        doc = """Task to characterize a donut exposure:
+              - detect sources, usually at high S/N
+              - estimate the background, which is subtracted from the image and
+                returned as field "background"
+              - interpolate over defects and cosmic rays, updating the image,
+                variance and mask planes
+              """
     )
     fitDonut = pexConfig.ConfigurableField(
-        target=FitDonutTask,
-        doc="""Task to select and fit donuts:
-            - Selects sources that look like isolated donuts
-            - Fit a wavefront forward model to donut images
-            """,
+        target = FitDonutTask,
+        doc = """Task to select and fit donuts:
+              - Selects sources that look like isolated donuts
+              - Fit a wavefront forward model to donut images
+              """
     )
 
     def setDefaults(self):
@@ -160,9 +160,9 @@ class ProcessDonutTask(pipeBase.CmdLineTask):
         exposure = self.isr.runDataRef(sensorRef).exposure
 
         charRes = self.charImage.run(
-            dataRef=sensorRef,
-            exposure=exposure,
-            doUnpersist=False,
+            dataRef = sensorRef,
+            exposure = exposure,
+            doUnpersist = False,
         )
 
         donutCat = self.fitDonut.run(sensorRef, charRes.sourceCat,

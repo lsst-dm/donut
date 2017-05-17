@@ -29,11 +29,19 @@ from lsst.ctrl.pool.parallel import BatchParallelTask
 
 class DonutDriverConfig(Config):
     processDonut = ConfigurableField(
-        target=ProcessDonutTask, doc="Donut processing task")
-    ignoreCcdList = ListField(dtype=int, default=[],
-                              doc="List of CCDs to ignore when processing")
-    ccdKey = Field(dtype=str, default="ccd",
-                   doc="DataId key corresponding to a single sensor")
+        target = ProcessDonutTask,
+        doc = "Donut processing task"
+    )
+    ignoreCcdList = ListField(
+        dtype = int,
+        default = [],
+        doc = "List of CCDs to ignore when processing"
+    )
+    ccdKey = Field(
+        dtype = str,
+        default = "ccd",
+        doc = "DataId key corresponding to a single sensor"
+    )
 
 
 class DonutDriverTask(BatchParallelTask):
@@ -46,14 +54,16 @@ class DonutDriverTask(BatchParallelTask):
         """!
         Constructor
 
-        @param[in,out] kwargs  other keyword arguments for lsst.ctrl.pool.BatchParallelTask
+        @param[in,out] kwargs  other keyword arguments for
+                               lsst.ctrl.pool.BatchParallelTask
         """
         BatchParallelTask.__init__(self, *args, **kwargs)
         self.ignoreCcds = set(self.config.ignoreCcdList)
         self.makeSubtask("processDonut")
 
     def run(self, sensorRef):
-        """Process a single CCD box of donuts, with scatter-gather-scatter using MPI.
+        """Process a single CCD box of donuts, with scatter-gather-scatter
+        using MPI.
         """
         if sensorRef.dataId[self.config.ccdKey] in self.ignoreCcds:
             self.log.warn("Ignoring %s: CCD in ignoreCcdList" %

@@ -258,9 +258,10 @@ class FitDonutTask(pipeBase.Task):
             for zmax in self.config.zmax:
                 self.log.info("Fitting with zmax = {}".format(zmax))
                 zfitter = ZernikeFitter(
-                    subMaskedImage, pixelScale,
-                    self.config.ignoredPixelMask,
                     zmax, wavelength, pupil, camera.telescopeDiameter,
+                    maskedImage = subMaskedImage,
+                    pixelScale = pixelScale,
+                    ignoredPixelMask = self.config.ignoredPixelMask,
                     xtol = self.config.fitTolerance)
                 zfitter.initParams(
                     z4Init = self.config.z4Init,

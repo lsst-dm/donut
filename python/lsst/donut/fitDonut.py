@@ -292,7 +292,8 @@ class FitDonutTask(pipeBase.Task):
 
         return pipeBase.Struct(donutSrc=donutSrc)
 
-    def _getGoodPupilShape(self, diam, wavelength, donutSize):
+    @staticmethod
+    def _getGoodPupilShape(diam, wavelength, donutSize):
         """!Estimate an appropriate size and shape for the pupil array.
 
         @param[in]  diam    Diameter of aperture in meters.
@@ -309,8 +310,7 @@ class FitDonutTask(pipeBase.Task):
         # L = lambda / dtheta
         # So plug in the donut size for theta and return dL for the scale.
         pupilScale = wavelength*1e-9/(donutSize.asRadians())  # meters
-        npix = self._getGoodFFTSize(pupilSize//pupilScale)
-        self.log.info("pupil npix = {}".format(npix))
+        npix = FitDonutTask._getGoodFFTSize(pupilSize//pupilScale)
         return pupilSize, npix
 
     @staticmethod

@@ -22,11 +22,14 @@
 # see <https://www.lsstcorp.org/LegalNotices/>.
 #
 from __future__ import absolute_import, division, print_function
+from future.utils import iteritems
 
 import os
+import collections
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
+import matplotlib.patches as patches
 
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
@@ -34,8 +37,10 @@ import lsst.afw.geom as afwGeom
 from lsst.afw.geom import arcseconds
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
+import lsst.afw.cameraGeom as afwCameraGeom
 from lsst.daf.persistence.safeFileIo import safeMakeDir
 from lsst.daf.persistence import NoResults
+from lsst.pipe.drivers.utils import getDataRef, ButlerTaskRunner
 from .zernikeFitter import ZernikeFitter
 from .fitDonut import FitDonutTask
 
@@ -67,6 +72,25 @@ def subplots(nrow, ncol, **kwargs):
              for i in range(ncol)]
             for j in range(nrow)]
     return fig, np.array(axes, dtype=object)
+
+
+def plotCameraOutline(axes, camera):
+    axes.tick_params(labelsize=6)
+    axes.locator_params(nbins=6)
+    axes.ticklabel_format(useOffset=False)
+    camRadius = max(camera.getFpBBox().getWidth(),
+                    camera.getFpBBox().getHeight())/2
+    camRadius = np.round(camRadius, -2)
+    camLimits = np.round(1.15*camRadius, -2)
+    for ccd in camera:
+        ccdCorners = ccd.getCorners(afwCameraGeom.FOCAL_PLANE)
+        axes.add_patch(patches.Rectangle(
+            ccdCorners[0], *list(ccdCorners[2] - ccdCorners[0]),
+            fill=False, edgecolor="k", ls="solid", lw=0.5))
+    axes.set_xlim(-camLimits, camLimits)
+    axes.set_ylim(-camLimits, camLimits)
+    axes.add_patch(patches.Circle(
+        (0, 0), radius=camRadius, color="black", alpha=0.1))
 
 
 def filedir(butler, dataset, dataId):
@@ -290,6 +314,86 @@ class GoodnessOfFitAnalysisTask(pipeBase.CmdLineTask):
             if i % 5 != 4:
                 fig.tight_layout()
                 pdf.savefig(fig)
+
+    def _getConfigName(self):
+        return None
+
+    def _getMetadataName(self):
+        return None
+
+
+class FitParamAnalysisConfig(pexConfig.Config):
+    pass
+
+
+class FitParamAnalysisTask(pipeBase.CmdLineTask):
+    ConfigClass = FitParamAnalysisConfig
+    _DefaultName = "FitParamAnalysis"
+    RunnerClass = ButlerTaskRunner
+
+    def __init__(self, *args, **kwargs):
+        pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
+
+    def run(self, expRef, butler):
+        """Process a single exposure, with scatter-gather-scatter using MPI.
+        """
+        dataIdList = dict([(ccdRef.get("ccdExposureId"), ccdRef.dataId)
+                           for ccdRef in expRef.subItems("ccd")
+                           if ccdRef.datasetExists("donutSrc")])
+        dataIdList = collections.OrderedDict(sorted(dataIdList.items()))
+        visit = expRef.dataId['visit']
+        self.log.info("Running on visit {}".format(visit))
+
+        try:
+            donutConfig = expRef.get("processDonut_config").fitDonut
+        except NoResults:
+            donutConfig = (expRef.get("donutDriver_config")
+                           .processDonut.fitDonut)
+        x = []
+        y = []
+        vals = collections.OrderedDict()
+        zmax = donutConfig.zmax[-1]
+        for k in ['r0']+['z{}'.format(z) for z in range(4, zmax + 1)]:
+            vals[k] = []
+
+        for dataId in dataIdList.values():
+            self.log.info("Loading ccd {}".format(dataId['ccd']))
+            sensorRef = getDataRef(butler, dataId)
+            donutSrc = sensorRef.get("donutSrc")
+            x.extend(list(donutSrc['base_FPPosition_x']))
+            y.extend(list(donutSrc['base_FPPosition_y']))
+            for k, v in iteritems(vals):
+                v.extend(donutSrc[k])
+
+        outputdir = filedir(expRef.getButler(),
+                            "donutSrc",
+                            dataIdList.values()[0])
+        plotdir = os.path.abspath(os.path.join(outputdir, "..", "plots"))
+        safeMakeDir(plotdir)
+        outfn = os.path.join(
+            plotdir,
+            "donutFitParam-{:07d}.pdf".format(visit))
+        with PdfPages(outfn) as pdf:
+            for k, v in iteritems(vals):
+                self.log.info("Plotting {}".format(k))
+                fig, axes = subplots(1, 1, figsize=(8, 6.2))
+                axes = axes.ravel()[0]
+                scatPlot = axes.scatter(x, y, c=v, s=15, linewidths=0.5)
+                axes.set_title(k)
+                plotCameraOutline(axes, expRef.get("camera"))
+                fig.tight_layout()
+                fig.colorbar(scatPlot)
+                pdf.savefig(fig)
+
+    @classmethod
+    def _makeArgumentParser(cls, *args, **kwargs):
+        # Pop doBatch keyword before passing it along to the argument parser
+        kwargs.pop("doBatch", False)
+        parser = pipeBase.ArgumentParser(name="FitParamAnalysis",
+                                         *args, **kwargs)
+        parser.add_id_argument("--id", datasetType="donutSrc", level="visit",
+                               help="data ID, e.g. --id visit=12345")
+        return parser
 
     def _getConfigName(self):
         return None

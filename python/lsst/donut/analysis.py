@@ -400,3 +400,133 @@ class FitParamAnalysisTask(pipeBase.CmdLineTask):
 
     def _getMetadataName(self):
         return None
+
+
+class StampAnalysisConfig(pexConfig.Config):
+    psfStampSize = pexConfig.Field(
+        dtype = int, default=32,
+        doc = "Size of PSF stamp in pixels",
+    )
+    psfPixelScale = pexConfig.Field(
+        dtype = float, default=0.025,
+        doc = "Pixel scale of PSF stamp in arcsec"
+    )
+
+
+class StampAnalysisTask(pipeBase.CmdLineTask):
+    ConfigClass = StampAnalysisConfig
+    _DefaultName = "StampAnalysisTask"
+    RunnerClass = ButlerTaskRunner
+
+    def __init__(self, *args, **kwargs):
+        pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
+
+    def run(self, expRef, butler):
+        """Make a stamp analysis image for a single exposure
+        """
+        dataIdList = dict([(ccdRef.get("ccdExposureId"), ccdRef.dataId)
+                           for ccdRef in expRef.subItems("ccd")
+                           if ccdRef.datasetExists("donutSrc")])
+        dataIdList = collections.OrderedDict(sorted(dataIdList.items()))
+        visit = expRef.dataId['visit']
+        self.log.info("Running on visit {}".format(visit))
+        camera = expRef.get("camera")
+
+        try:
+            donutConfig = expRef.get("processDonut_config").fitDonut
+        except NoResults:
+            donutConfig = (expRef.get("donutDriver_config")
+                           .processDonut.fitDonut)
+
+        outputdir = filedir(expRef.getButler(),
+                            "donutSrc",
+                            dataIdList.values()[0])
+        plotdir = os.path.abspath(os.path.join(outputdir, "..", "plots"))
+        safeMakeDir(plotdir)
+
+        # Collect images
+        images = {}
+        models = {}
+        resids = {}
+        psfs = {}
+        for dataId in dataIdList.values():
+            ccd = dataId['ccd']
+            self.log.info("Loading ccd {}".format(ccd))
+            sensorRef = getDataRef(butler, dataId)
+            icExp = sensorRef.get("icExp")
+            donutSrc = sensorRef.get("donutSrc")
+
+            if len(donutSrc) == 0:
+                continue
+            s2n = (donutSrc['base_CircularApertureFlux_25_0_flux'] /
+                   donutSrc['base_CircularApertureFlux_25_0_fluxSigma'])
+            idx = np.argsort(s2n)[-1]
+
+            data, model, psf = donutDataModelPsf(
+                donutSrc[idx], donutConfig, icExp, camera,
+                psfStampSize = self.config.psfStampSize,
+                psfPixelScale = self.config.psfPixelScale*arcseconds)
+            resid = data - model
+            images[ccd] = data
+            models[ccd] = model
+            resids[ccd] = resid
+            psfs[ccd] = psf
+
+        # Make plots
+        datafn = "donutStampData-{:07d}.pdf".format(visit)
+        modelfn = "donutStampModel-{:07d}.pdf".format(visit)
+        residfn = "donutStampResid-{:07d}.pdf".format(visit)
+        psffn = "donutStampPsf-{:07d}.pdf".format(visit)
+        for data, fn in zip((images, models, resids, psfs),
+                            (datafn, modelfn, residfn, psffn)):
+            outfn = os.path.join(plotdir, fn)
+            with PdfPages(outfn) as pdf:
+                fig, axes = subplots(1, 1, figsize=(8, 6.2))
+                axes = axes.ravel()[0]
+                plotCameraOutline(axes, camera)
+                for dataId in dataIdList.values():
+                    ccd = dataId['ccd']
+                    try:
+                        self.imshow(data[ccd], camera[ccd], axes,
+                                    cmap='viridis')
+                    except KeyError:
+                        pass
+                fig.tight_layout()
+                pdf.savefig(fig)
+
+    @staticmethod
+    def imshow(img, det, axes, **kwargs):
+        corners = det.getCorners(afwCameraGeom.FOCAL_PLANE)
+        left = min(c[0] for c in corners)
+        right = max(c[0] for c in corners)
+        top = max(c[1] for c in corners)
+        bottom = min(c[1] for c in corners)
+        # Shrink long axis so that donut has equal aspect ratio
+        exttb = top-bottom
+        extlr = right-left
+        if exttb > extlr:
+            medtb = 0.5*(top+bottom)
+            top = medtb + 0.5*extlr
+            bottom = medtb - 0.5*extlr
+        else:
+            medlr = 0.5*(left+right)
+            left = medlr - 0.5*exttb
+            right = medlr + 0.5*exttb
+        axes.imshow(img, extent=[left, right, bottom, top],
+                    aspect='equal', origin='lower', **kwargs)
+
+    @classmethod
+    def _makeArgumentParser(cls, *args, **kwargs):
+        # Pop doBatch keyword before passing it along to the argument parser
+        kwargs.pop("doBatch", False)
+        parser = pipeBase.ArgumentParser(name="StampAnalysis",
+                                         *args, **kwargs)
+        parser.add_id_argument("--id", datasetType="donutSrc", level="visit",
+                               help="data ID, e.g. --id visit=12345")
+        return parser
+
+    def _getConfigName(self):
+        return None
+
+    def _getMetadataName(self):
+        return None

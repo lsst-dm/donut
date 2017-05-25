@@ -27,7 +27,7 @@ from future.utils import iteritems
 import os
 import collections
 import numpy as np
-from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.backends.backend_pdf import PdfPages, FigureCanvasPdf
 from matplotlib.figure import Figure
 import matplotlib.patches as patches
 
@@ -159,6 +159,24 @@ def donutDataModelPsf(donut, donutConfig, icExp, camera,
     if psfOnly:
         return psf
     return data, model, psf
+
+
+def moments(image, scale=1.0):
+    x, y = np.meshgrid(np.arange(image.shape[0])*scale,
+                       np.arange(image.shape[1])*scale)
+    I0 = image.sum()
+    Ix = (image*x).sum()/I0
+    Iy = (image*y).sum()/I0
+    Ixx = (image*(x-Ix)*(x-Ix)).sum()/I0
+    Ixy = (image*(x-Ix)*(y-Iy)).sum()/I0
+    Iyy = (image*(y-Iy)*(y-Iy)).sum()/I0
+    rsqr = Ixx + Iyy
+    e1 = (Ixx - Iyy)/rsqr
+    e2 = 2*Ixy/rsqr
+    r = np.sqrt(rsqr)
+    e = np.hypot(e1, e2)
+    return dict(I0=I0, Ix=Ix, Iy=Iy, Ixx=Ixx, Ixy=Ixy, Iyy=Iyy,
+                e1=e1, e2=e2, rsqr=rsqr, r=r, e=e)
 
 
 class SelectionAnalysisConfig(pexConfig.Config):
@@ -525,6 +543,128 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
         # Pop doBatch keyword before passing it along to the argument parser
         kwargs.pop("doBatch", False)
         parser = pipeBase.ArgumentParser(name="StampAnalysis",
+                                         *args, **kwargs)
+        parser.add_id_argument("--id", datasetType="donutSrc", level="visit",
+                               help="data ID, e.g. --id visit=12345")
+        return parser
+
+    def _getConfigName(self):
+        return None
+
+    def _getMetadataName(self):
+        return None
+
+
+class PsfMomentsAnalysisConfig(pexConfig.Config):
+    psfStampSize = pexConfig.Field(
+        dtype = int,
+        default = 32,
+        doc = "Size of PSF stamp in pixels"
+    )
+    psfPixelScale = pexConfig.Field(
+        dtype = float,
+        default = 0.025,
+        doc = "Pixel scale of PSF stamp in arcsec"
+    )
+
+
+class PsfMomentsAnalysisTask(pipeBase.CmdLineTask):
+    ConfigClass = PsfMomentsAnalysisConfig
+    _DefaultName = "PsfMomentsAnalysisTask"
+    RunnerClass = ButlerTaskRunner
+
+    def __init__(self, *args, **kwargs):
+        pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
+
+    def run(self, expRef, butler):
+        """Do moments analysis for single exposure
+        """
+        dataIdList = dict([(ccdRef.get("ccdExposureId"), ccdRef.dataId)
+                           for ccdRef in expRef.subItems("ccd")
+                           if ccdRef.datasetExists("donutSrc")])
+        dataIdList = collections.OrderedDict(sorted(dataIdList.items()))
+        visit = expRef.dataId['visit']
+        self.log.info("Running on visit {}".format(visit))
+        camera = expRef.get("camera")
+
+        try:
+            donutConfig = expRef.get("processDonut_config").fitDonut
+        except NoResults:
+            donutConfig = (expRef.get("donutDriver_config")
+                           .processDonut.fitDonut)
+
+        x = []
+        y = []
+        vals = collections.OrderedDict()
+        for k in ['Ixx', 'Ixy', 'Iyy', 'e1', 'e2', 'e', 'rsqr', 'r']:
+            vals[k] = []
+
+        for dataId in dataIdList.values():
+            ccd = dataId['ccd']
+            self.log.info("Processing ccd {}".format(ccd))
+            sensorRef = getDataRef(butler, dataId)
+            icExp = sensorRef.get("icExp")
+            donutSrc = sensorRef.get("donutSrc")
+
+            for donut in donutSrc:
+                psf = donutDataModelPsf(
+                    donut, donutConfig, icExp, camera,
+                    psfStampSize = self.config.psfStampSize,
+                    psfPixelScale = self.config.psfPixelScale*arcseconds,
+                    psfOnly=True)
+                mom = moments(psf, self.config.psfPixelScale)
+                x.append(donut['base_FPPosition_x'])
+                y.append(donut['base_FPPosition_y'])
+                for k in vals:
+                    vals[k].append(mom[k])
+
+        outputdir = filedir(expRef.getButler(),
+                            "donutSrc",
+                            dataIdList.values()[0])
+        plotdir = os.path.abspath(os.path.join(outputdir, "..", "plots"))
+        safeMakeDir(plotdir)
+        outfn = os.path.join(
+            plotdir,
+            "donutPsfMoments-{:07d}.pdf".format(visit))
+        with PdfPages(outfn) as pdf:
+            for k, v in iteritems(vals):
+                self.log.info("Plotting {}".format(k))
+                fig, axes = subplots(1, 1, figsize=(8, 6.2))
+                axes = axes.ravel()[0]
+                scatPlot = axes.scatter(x, y, c=v, s=15, linewidths=0.5)
+                axes.set_title(k)
+                plotCameraOutline(axes, camera)
+                fig.tight_layout()
+                fig.colorbar(scatPlot)
+                pdf.savefig(fig)
+
+            # A bit of matplotlib trickery to get the whisker plot to align
+            # with the scatter plots generated above.
+            rect = axes.get_position()
+            fig = Figure(figsize=(8, 6.2))
+            FigureCanvasPdf(fig)
+            axes = fig.add_axes(rect)
+
+            wth = np.arctan2(vals['e2'], vals['e1'])/2
+            wx = vals['e']*np.cos(wth)
+            wy = vals['e']*np.sin(wth)
+            axes.quiver(
+                x, y, wx, wy,
+                headwidth = 0,
+                pivot = 'middle',
+                headlength = 1e-10,  # If zero emits divide-by-zero warnings.
+                headaxislength = 0,
+                minlength = 0,
+                scale_units = 'xy',
+                width = 0.002)
+            plotCameraOutline(axes, camera)
+            pdf.savefig(fig)
+
+    @classmethod
+    def _makeArgumentParser(cls, *args, **kwargs):
+        # Pop doBatch keyword before passing it along to the argument parser
+        kwargs.pop("doBatch", False)
+        parser = pipeBase.ArgumentParser(name="PsfMomentsAnalysis",
                                          *args, **kwargs)
         parser.add_id_argument("--id", datasetType="donutSrc", level="visit",
                                help="data ID, e.g. --id visit=12345")

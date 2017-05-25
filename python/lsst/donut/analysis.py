@@ -27,6 +27,7 @@ from future.utils import iteritems
 import os
 import collections
 import numpy as np
+import galsim
 from matplotlib.backends.backend_pdf import PdfPages, FigureCanvasPdf
 from matplotlib.figure import Figure
 import matplotlib.patches as patches
@@ -97,10 +98,11 @@ def filedir(butler, dataset, dataId):
     return os.path.dirname(butler.get(dataset+"_filename", dataId)[0])
 
 
-def donutDataModelPsf(donut, donutConfig, icExp, camera,
-                      psfStampSize=None, psfPixelScale=None,
-                      psfOnly=False):
-    """Return numpy arrays of donut cutout and corresponding model
+def donutDataModelWfPsf(donut, donutConfig, icExp, camera,
+                        psfStampSize=None, psfPixelScale=None,
+                        psfOnly=False):
+    """Return numpy arrays of donut cutout, corresponding model, wavefront,
+    and implied in-focus PSF.
     """
     if psfStampSize is None:
         psfStampSize = donutConfig.stampSize
@@ -147,6 +149,19 @@ def donutDataModelPsf(donut, donutConfig, icExp, camera,
             params = params,
             pixelScale = pixelScale.asArcseconds(),
             shape = (donutConfig.stampSize, donutConfig.stampSize))
+
+    # Use less well-sampled pupil for in-focus PSF
+    psfPupilSize, psfPupilNPix = FitDonutTask._getGoodPupilShape(
+        camera.telescopeDiameter, wavelength, 2*psfStampSize*psfPixelScale)
+    psfPupilFactory = camera.getPupilFactory(
+        visitInfo, psfPupilSize, psfPupilNPix)
+    psfPupil = psfPupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
+    zfitter.aper = galsim.Aperture(
+        diam = camera.telescopeDiameter,
+        pupil_plane_im = psfPupil.illuminated.astype(np.int16),
+        pupil_plane_scale = psfPupil.scale,
+        pupil_plane_size = psfPupil.size)
+
     params['z4'] = 0.0
     params['dx'] = 0.0
     params['dy'] = 0.0
@@ -156,9 +171,11 @@ def donutDataModelPsf(donut, donutConfig, icExp, camera,
         params = params,
         pixelScale = psfPixelScale.asArcseconds(),
         shape = (psfStampSize, psfStampSize))
+    wf = zfitter.constructWavefrontImage(params=params)
+    wf = wf[wf.shape[0]//4:3*wf.shape[0]//4, wf.shape[0]//4:3*wf.shape[0]//4]
     if psfOnly:
         return psf
-    return data, model, psf
+    return data, model, wf, psf
 
 
 def moments(image, scale=1.0):
@@ -308,33 +325,39 @@ class GoodnessOfFitAnalysisTask(pipeBase.CmdLineTask):
                        for e in [-1, 1, -1, 1]]
         psfExtent = [0.5*self.config.psfStampSize*e*self.config.psfPixelScale
                      for e in [-1, 1, -1, 1]]
+        wfExtent = [0.5*camera.telescopeDiameter*e for e in [-1, 1, -1, 1]]
+        nrow = 7
+        ncol = 5
         with PdfPages(outfn) as pdf:
             i = 0
             for donut in donutSrc:
-                if i % 5 == 0:
-                    fig, axes = subplots(5, 4, figsize=(8.5, 11))
-                data, model, psf = donutDataModelPsf(
+                if i % nrow == 0:
+                    fig, axes = subplots(nrow, ncol, figsize=(8.5, 11))
+                data, model, wf, psf = donutDataModelWfPsf(
                     donut, donutConfig, icExp, camera,
                     psfStampSize = self.config.psfStampSize,
                     psfPixelScale = self.config.psfPixelScale*arcseconds)
                 resid = data - model
-                axes[i%5, 0].imshow(data, cmap='viridis',
-                                    interpolation='nearest',
-                                    extent=donutExtent)
-                axes[i%5, 1].imshow(model, cmap='viridis',
-                                    interpolation='nearest',
-                                    extent=donutExtent)
-                axes[i%5, 2].imshow(resid, cmap='viridis',
-                                    interpolation='nearest',
-                                    extent=donutExtent)
-                axes[i%5, 3].imshow(psf, cmap='viridis',
-                                    interpolation='nearest',
-                                    extent=psfExtent)
-                if i % 5 == 4:
+                axes[i%nrow, 0].imshow(data, cmap='viridis',
+                                       interpolation='nearest',
+                                       extent=donutExtent)
+                axes[i%nrow, 1].imshow(model, cmap='viridis',
+                                       interpolation='nearest',
+                                       extent=donutExtent)
+                axes[i%nrow, 2].imshow(resid, cmap='viridis',
+                                       interpolation='nearest',
+                                       extent=donutExtent)
+                axes[i%nrow, 3].imshow(psf, cmap='viridis',
+                                       interpolation='nearest',
+                                       extent=psfExtent)
+                axes[i%nrow, 4].imshow(wf, cmap='viridis',
+                                       interpolation='nearest',
+                                       extent=wfExtent)
+                if i % nrow == nrow-1:
                     fig.tight_layout()
                     pdf.savefig(fig)
                 i += 1
-            if i % 5 != 4:
+            if i % nrow != nrow-1:
                 fig.tight_layout()
                 pdf.savefig(fig)
 
@@ -472,6 +495,7 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
         models = {}
         resids = {}
         psfs = {}
+        wfs = {}
         for dataId in dataIdList.values():
             ccd = dataId['ccd']
             self.log.info("Loading ccd {}".format(ccd))
@@ -485,7 +509,7 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
                    donutSrc['base_CircularApertureFlux_25_0_fluxSigma'])
             idx = np.argsort(s2n)[-1]
 
-            data, model, psf = donutDataModelPsf(
+            data, model, wf, psf = donutDataModelWfPsf(
                 donutSrc[idx], donutConfig, icExp, camera,
                 psfStampSize = self.config.psfStampSize,
                 psfPixelScale = self.config.psfPixelScale*arcseconds)
@@ -494,14 +518,16 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
             models[ccd] = model
             resids[ccd] = resid
             psfs[ccd] = psf
+            wfs[ccd] = wf
 
         # Make plots
         datafn = "donutStampData-{:07d}.pdf".format(visit)
         modelfn = "donutStampModel-{:07d}.pdf".format(visit)
         residfn = "donutStampResid-{:07d}.pdf".format(visit)
         psffn = "donutStampPsf-{:07d}.pdf".format(visit)
-        for data, fn in zip((images, models, resids, psfs),
-                            (datafn, modelfn, residfn, psffn)):
+        wffn = "donutStampWavefront-{:07d}.pdf".format(visit)
+        for data, fn in zip((images, models, resids, psfs, wfs),
+                            (datafn, modelfn, residfn, psffn, wffn)):
             outfn = os.path.join(plotdir, fn)
             with PdfPages(outfn) as pdf:
                 fig, axes = subplots(1, 1, figsize=(8, 6.2))
@@ -607,7 +633,7 @@ class PsfMomentsAnalysisTask(pipeBase.CmdLineTask):
             donutSrc = sensorRef.get("donutSrc")
 
             for donut in donutSrc:
-                psf = donutDataModelPsf(
+                psf = donutDataModelWfPsf(
                     donut, donutConfig, icExp, camera,
                     psfStampSize = self.config.psfStampSize,
                     psfPixelScale = self.config.psfPixelScale*arcseconds,

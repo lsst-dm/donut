@@ -98,7 +98,8 @@ def filedir(butler, dataset, dataId):
 
 
 def donutDataModelPsf(donut, donutConfig, icExp, camera,
-                      psfStampSize=None, psfPixelScale=None):
+                      psfStampSize=None, psfPixelScale=None,
+                      psfOnly=False):
     """Return numpy arrays of donut cutout and corresponding model
     """
     if psfStampSize is None:
@@ -124,26 +125,28 @@ def donutDataModelPsf(donut, donutConfig, icExp, camera,
     fpX = donut['base_FPPosition_x']
     fpY = donut['base_FPPosition_y']
     pupil = pupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
-    maskedImage = cutoutDonut(donut.getX(), donut.getY(), icExp,
-                              donutConfig.stampSize)
-    maskedImage = afwMath.rotateImageBy90(maskedImage, nquarter)
 
-    zfitter = ZernikeFitter(
-        zmax,
-        wavelength,
-        pupil,
-        camera.telescopeDiameter)
     params = {}
     keys = ['r0', 'dx', 'dy', 'flux']
     for j in range(4, zmax + 1):
         keys.append('z{}'.format(j))
     for k in keys:
         params[k] = donut[k]
-    data = maskedImage.getImage().getArray()
-    model = zfitter.constructModelImage(
-        params = params,
-        pixelScale = pixelScale.asArcseconds(),
-        shape = (donutConfig.stampSize, donutConfig.stampSize))
+    zfitter = ZernikeFitter(
+        zmax,
+        wavelength,
+        pupil,
+        camera.telescopeDiameter)
+
+    if not psfOnly:
+        maskedImage = cutoutDonut(donut.getX(), donut.getY(), icExp,
+                                  donutConfig.stampSize)
+        maskedImage = afwMath.rotateImageBy90(maskedImage, nquarter)
+        data = maskedImage.getImage().getArray()
+        model = zfitter.constructModelImage(
+            params = params,
+            pixelScale = pixelScale.asArcseconds(),
+            shape = (donutConfig.stampSize, donutConfig.stampSize))
     params['z4'] = 0.0
     params['dx'] = 0.0
     params['dy'] = 0.0
@@ -153,6 +156,8 @@ def donutDataModelPsf(donut, donutConfig, icExp, camera,
         params = params,
         pixelScale = psfPixelScale.asArcseconds(),
         shape = (psfStampSize, psfStampSize))
+    if psfOnly:
+        return psf
     return data, model, psf
 
 

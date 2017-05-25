@@ -124,6 +124,15 @@ class ZernikeFitter(object):
         self.result = lmfit.minimize(self._chi, self.params, **self.kwargs)
         return self.result
 
+    def _getOptPsf(self, params):
+        aberrations = [0, 0, 0, 0]
+        for i in range(4, self.zmax + 1):
+            aberrations.append(params['z{}'.format(i)])
+        return galsim.OpticalPSF(lam = self.wavelength,
+                                 diam = self.aper.diam,
+                                 aper = self.aper,
+                                 aberrations = aberrations)
+
     def constructModelImage(self, params=None, pixelScale=None, shape=None):
         """Construct model image from parameters
 
@@ -146,13 +155,7 @@ class ZernikeFitter(object):
         except AttributeError:
             v = params
 
-        aberrations = [0, 0, 0, 0]
-        for i in range(4, self.zmax + 1):
-            aberrations.append(v['z{}'.format(i)])
-        optPsf = galsim.OpticalPSF(lam = self.wavelength,
-                                   diam = self.aper.diam,
-                                   aper = self.aper,
-                                   aberrations = aberrations)
+        optPsf = self._getOptPsf(v)
         if 'r0' in v:
             atmPsf = galsim.Kolmogorov(lam=self.wavelength, r0=v['r0'])
             psf = galsim.Convolve(optPsf, atmPsf)
@@ -165,6 +168,30 @@ class ZernikeFitter(object):
             ny = shape[1],
             scale = pixelScale)
         return modelImg.array
+
+    def constructWavefrontImage(self, params=None):
+        """Construct an image of the wavefront from parameters
+
+        @param params      lmfit.Parameters object or python dictionary with
+                           param values to use, or None to use self.params
+        @returns       numpy masked array image
+        """
+        if params is None:
+            params = self.params
+        aper = galsim.Aperture(
+            diam = self.aper.diam,
+            pupil_plane_im = self.aper.illuminated.astype(np.int16),
+            pupil_plane_scale = self.aper.pupil_plane_scale,
+            pupil_plane_size = self.aper.diam)
+        try:
+            v = params.valuesdict()
+        except AttributeError:
+            v = params
+        optPsf = self._getOptPsf(v)
+        out = np.zeros_like(aper.u)
+        out[aper.illuminated] = optPsf._psf.screen_list.wavefront(aper)
+        mask = np.logical_not(aper.illuminated)
+        return np.ma.masked_array(out, mask)
 
     def _chi(self, params):
         """Compute 'chi' image: (data - model)/sigma

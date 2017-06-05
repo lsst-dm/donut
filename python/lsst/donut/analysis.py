@@ -196,6 +196,20 @@ def moments(image, scale=1.0):
                 e1=e1, e2=e2, rsqr=rsqr, r=r, e=e)
 
 
+def markGoodDonuts(donutSrc, icExp, stampSize, ignoredPixelMask):
+    good = []
+    for donut in donutSrc:
+        subMaskedImage = cutoutDonut(
+            donut.getX(), donut.getY(), icExp, stampSize)
+        mask = subMaskedImage.getMask()
+        bitmask = reduce(lambda x, y: x | mask.getPlaneBitMask(y),
+                         ignoredPixelMask, 0x0)
+        badpix = (np.bitwise_and(mask.getArray().astype(np.uint16),
+                                bitmask) != 0)
+        good.append(badpix.sum() == 0)
+    return np.array(good, dtype=np.bool)
+
+
 class SelectionAnalysisConfig(pexConfig.Config):
     pass
 
@@ -406,10 +420,15 @@ class FitParamAnalysisTask(pipeBase.CmdLineTask):
             self.log.info("Loading ccd {}".format(dataId['ccd']))
             sensorRef = getDataRef(butler, dataId)
             donutSrc = sensorRef.get("donutSrc")
-            x.extend(list(donutSrc['base_FPPosition_x']))
-            y.extend(list(donutSrc['base_FPPosition_y']))
+            icExp = sensorRef.get("icExp")
+            goodDonuts = markGoodDonuts(
+                donutSrc, icExp,
+                donutConfig.stampSize, donutConfig.ignoredPixelMask)
+            donutSrc = donutSrc.subset(goodDonuts)
+            x.extend([donut['base_FPPosition_x'] for donut in donutSrc])
+            y.extend([donut['base_FPPosition_y'] for donut in donutSrc])
             for k, v in iteritems(vals):
-                v.extend(donutSrc[k])
+                v.extend(donut[k] for donut in donutSrc)
 
         outputdir = filedir(expRef.getButler(),
                             "donutSrc",
@@ -507,7 +526,16 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
                 continue
             s2n = (donutSrc['base_CircularApertureFlux_25_0_flux'] /
                    donutSrc['base_CircularApertureFlux_25_0_fluxSigma'])
-            idx = np.argsort(s2n)[-1]
+            indices = np.arange(len(s2n))
+            goodDonuts = markGoodDonuts(
+                donutSrc, icExp,
+                donutConfig.stampSize, donutConfig.ignoredPixelMask)
+            if len(goodDonuts) < 1:
+                continue
+
+            indices = indices[goodDonuts]
+            s2n = s2n[goodDonuts]
+            idx = indices[np.argsort(s2n)[-1]]
 
             data, model, wf, psf = donutDataModelWfPsf(
                 donutSrc[idx], donutConfig, icExp, camera,
@@ -631,8 +659,11 @@ class PsfMomentsAnalysisTask(pipeBase.CmdLineTask):
             sensorRef = getDataRef(butler, dataId)
             icExp = sensorRef.get("icExp")
             donutSrc = sensorRef.get("donutSrc")
+            goodDonuts = markGoodDonuts(
+                donutSrc, icExp,
+                donutConfig.stampSize, donutConfig.ignoredPixelMask)
 
-            for donut in donutSrc:
+            for donut in donutSrc.subset(goodDonuts):
                 psf = donutDataModelWfPsf(
                     donut, donutConfig, icExp, camera,
                     psfStampSize = self.config.psfStampSize,

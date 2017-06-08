@@ -241,7 +241,8 @@ class FitDonutTask(pipeBase.Task):
         nquarter = icExp.getDetector().getOrientation().getNQuarter()
         if self.config.flip:
             nquarter += 2
-        donutSrc = self.selectDonut.run(icSrc)
+        donutSrc = self.selectDonut.run(
+            icSrc, icExp, self.config.stampSize, self.config.ignoredPixelMask)
 
         for i, record in enumerate(donutSrc):
             self.log.info("Fitting donut {} of {}".format(

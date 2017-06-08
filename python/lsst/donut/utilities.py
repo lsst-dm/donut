@@ -26,6 +26,7 @@ import numpy as np
 
 import lsst.afw.image as afwImage
 import lsst.afw.geom as afwGeom
+import lsst.afw.cameraGeom as cameraGeom
 
 
 def cutoutDonut(x, y, icExp, stampSize):
@@ -89,3 +90,16 @@ def _getGoodFFTSize(n):
     exp2 = int(np.ceil(np.log(n)/np.log(2)))
     exp3 = int(np.ceil((np.log(n) - np.log(3))/np.log(2)))
     return min(2**exp2, 3*2**exp3)
+
+
+def _getJacobian(detector, point):
+    # Converting from PIXELS to TAN_PIXELS
+    pixTransform = detector.getTransform(cameraGeom.PIXELS)
+    tanPixTransform = detector.getTransform(cameraGeom.TAN_PIXELS)
+
+    transform = afwGeom.MultiXYTransform([
+        afwGeom.InvertedXYTransform(pixTransform),
+        tanPixTransform])
+    affineTransform = transform.linearizeForwardTransform(point)
+    linearTransform = affineTransform.getLinear()
+    return linearTransform.getParameterVector().reshape(2, 2)

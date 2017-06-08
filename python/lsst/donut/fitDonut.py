@@ -258,9 +258,10 @@ class FitDonutTask(pipeBase.Task):
             for zmax in self.config.zmax:
                 self.log.info("Fitting with zmax = {}".format(zmax))
                 zfitter = ZernikeFitter(
-                    subMaskedImage, pixelScale,
-                    self.config.ignoredPixelMask,
                     zmax, wavelength, pupil, camera.telescopeDiameter,
+                    maskedImage = subMaskedImage,
+                    pixelScale = pixelScale,
+                    ignoredPixelMask = self.config.ignoredPixelMask,
                     xtol = self.config.fitTolerance)
                 zfitter.initParams(
                     z4Init = self.config.z4Init,
@@ -291,7 +292,8 @@ class FitDonutTask(pipeBase.Task):
 
         return pipeBase.Struct(donutSrc=donutSrc)
 
-    def _getGoodPupilShape(self, diam, wavelength, donutSize):
+    @staticmethod
+    def _getGoodPupilShape(diam, wavelength, donutSize):
         """!Estimate an appropriate size and shape for the pupil array.
 
         @param[in]  diam    Diameter of aperture in meters.
@@ -308,8 +310,7 @@ class FitDonutTask(pipeBase.Task):
         # L = lambda / dtheta
         # So plug in the donut size for theta and return dL for the scale.
         pupilScale = wavelength*1e-9/(donutSize.asRadians())  # meters
-        npix = self._getGoodFFTSize(pupilSize//pupilScale)
-        self.log.info("pupil npix = {}".format(npix))
+        npix = FitDonutTask._getGoodFFTSize(pupilSize//pupilScale)
         return pupilSize, npix
 
     @staticmethod
@@ -340,8 +341,8 @@ class FitDonutTask(pipeBase.Task):
         return subMaskedImage
 
     def displayFitter(self, zfitter, pupil):
-        data = zfitter.image
-        model = zfitter.model(zfitter.result.params)
+        data = zfitter.maskedImage.getImage().getArray()
+        model = zfitter.constructModelImage(zfitter.result.params)
         resid = data - model
         mtv(afwImage.ImageD(data.astype(np.float64)),
             frame = 1, title = "data")

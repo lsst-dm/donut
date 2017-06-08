@@ -42,26 +42,39 @@ class ZernikeFitter(object):
     To fit the model then use the `.fit` method which returns an
     lmfit.MinimizerResult (and also become accessible through the .result)
     attribute.
+
+    This class can also be used without a target image to fit, in order to draw
+    model images given parameters.
     """
-    def __init__(self, maskedImage, pixelScale, ignoredPixelMask, zmax,
-                 wavelength, pupil, diam, **kwargs):
+    def __init__(self, zmax, wavelength, pupil, diam, pixelScale=None,
+                 maskedImage=None, ignoredPixelMask=None, **kwargs):
         """
-        @param maskedImage    maskedImage of donut to fit.
-        @param pixelScale     pixel scale of maskedImage as afwGeom.Angle.
-        @param ignoredPixelMask   Names of mask planes to ignore when fitting.
         @param zmax        Maximum Zernike order to fit.
         @param wavelength  Wavelength to use for model.
         @param pupil       afwCameraGeom.Pupil for model.
         @param diam        Pupil diameter.
+        @param maskedImage maskedImage of donut to fit.  May be None if simply
+                           using this class to draw models without
+                           doing a fit.
+        @param pixelScale  pixel scale of maskedImage as afwGeom.Angle, or
+                           None if using this class to draw models without
+                           doing a fit.
+        @param ignoredPixelMask  Names of mask planes to ignore when fitting.
+                                 May be None if simply using this class to draw
+                                 models without doing a fit.
         @param **kwargs    Additional kwargs to pass to lmfit.minimize.
         """
-        self.maskedImage = maskedImage
-        mask = self.maskedImage.getMask()
-        bitmask = reduce(lambda x, y: x | mask.getPlaneBitMask(y),
-                         ignoredPixelMask, 0x0)
-        self.good = (
-            np.bitwise_and(mask.getArray().astype(np.uint16), bitmask) == 0)
-        self.pixelScale = pixelScale.asArcseconds()
+        if maskedImage is not None:
+            if ignoredPixelMask is None:
+                raise ValueError("ignoredPixelMask ")
+            self.maskedImage = maskedImage
+            mask = self.maskedImage.getMask()
+            bitmask = reduce(lambda x, y: x | mask.getPlaneBitMask(y),
+                             ignoredPixelMask, 0x0)
+            self.good = (np.bitwise_and(mask.getArray().astype(np.uint16),
+                                        bitmask) == 0)
+        if pixelScale is not None:
+            self.pixelScale = pixelScale.asArcseconds()
         self.zmax = zmax
         self.wavelength = wavelength
         self.aper = galsim.Aperture(
@@ -111,31 +124,74 @@ class ZernikeFitter(object):
         self.result = lmfit.minimize(self._chi, self.params, **self.kwargs)
         return self.result
 
-    def constructModelImage(self, params=None):
+    def _getOptPsf(self, params):
+        aberrations = [0, 0, 0, 0]
+        for i in range(4, self.zmax + 1):
+            aberrations.append(params['z{}'.format(i)])
+        return galsim.OpticalPSF(lam = self.wavelength,
+                                 diam = self.aper.diam,
+                                 aper = self.aper,
+                                 aberrations = aberrations)
+
+    def constructModelImage(self, params=None, pixelScale=None, shape=None):
         """Construct model image from parameters
 
-        @param params  lmfit.Parameters object or None to use self.params
+        @param params      lmfit.Parameters object or python dictionary with
+                           param values to use, or None to use self.params
+        @param pixelScale  pixel scale in arcseconds to use for model image,
+                           or None to use self.pixelScale.
+        @param shape       (nx, ny) shape for model image, or None to use
+                           the shape of self.maskedImage
         @returns       numpy array image
         """
         if params is None:
             params = self.params
-        v = params.valuesdict()
-        aberrations = [0, 0, 0, 0]
-        for i in range(4, self.zmax + 1):
-            aberrations.append(v['z{}'.format(i)])
-        optPsf = galsim.OpticalPSF(lam = self.wavelength,
-                                   diam = self.aper.diam,
-                                   aper = self.aper,
-                                   aberrations = aberrations)
-        atmPsf = galsim.Kolmogorov(lam=self.wavelength, r0=v['r0'])
-        psf = (galsim.Convolve(optPsf, atmPsf)
-               .shift(v['dx'], v['dy'])*v['flux'])
-        shape = self.maskedImage.getImage().getArray().shape
+        if shape is None:
+            shape = self.maskedImage.getImage().getArray().shape
+        if pixelScale is None:
+            pixelScale = self.pixelScale
+        try:
+            v = params.valuesdict()
+        except AttributeError:
+            v = params
+
+        optPsf = self._getOptPsf(v)
+        if 'r0' in v:
+            atmPsf = galsim.Kolmogorov(lam=self.wavelength, r0=v['r0'])
+            psf = galsim.Convolve(optPsf, atmPsf)
+        else:
+            psf = optPsf
+        psf = psf.shift(v['dx'], v['dy'])*v['flux']
+
         modelImg = psf.drawImage(
             nx = shape[0],
             ny = shape[1],
-            scale = self.pixelScale)
+            scale = pixelScale)
         return modelImg.array
+
+    def constructWavefrontImage(self, params=None):
+        """Construct an image of the wavefront from parameters
+
+        @param params      lmfit.Parameters object or python dictionary with
+                           param values to use, or None to use self.params
+        @returns       numpy masked array image
+        """
+        if params is None:
+            params = self.params
+        aper = galsim.Aperture(
+            diam = self.aper.diam,
+            pupil_plane_im = self.aper.illuminated.astype(np.int16),
+            pupil_plane_scale = self.aper.pupil_plane_scale,
+            pupil_plane_size = self.aper.diam)
+        try:
+            v = params.valuesdict()
+        except AttributeError:
+            v = params
+        optPsf = self._getOptPsf(v)
+        out = np.zeros_like(aper.u)
+        out[aper.illuminated] = optPsf._psf.screen_list.wavefront(aper)
+        mask = np.logical_not(aper.illuminated)
+        return np.ma.masked_array(out, mask)
 
     def _chi(self, params):
         """Compute 'chi' image: (data - model)/sigma

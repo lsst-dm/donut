@@ -341,8 +341,8 @@ class FitDonutTask(pipeBase.Task):
         return subMaskedImage
 
     def displayFitter(self, zfitter, pupil):
-        data = zfitter.image
-        model = zfitter.model(zfitter.result.params)
+        data = zfitter.maskedImage.getImage().getArray()
+        model = zfitter.constructModelImage(zfitter.result.params)
         resid = data - model
         mtv(afwImage.ImageD(data.astype(np.float64)),
             frame = 1, title = "data")

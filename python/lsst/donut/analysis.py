@@ -251,14 +251,14 @@ class SelectionAnalysisTask(pipeBase.CmdLineTask):
                     fig.suptitle("visit = {}  ccd = {}".format(visit, ccd))
                     fig.tight_layout()
                     fig.subplots_adjust(top=0.94)
-                    pdf.savefig(fig)
+                    pdf.savefig(fig, dpi=100)
                 i += 1
             # Clean up potentially partially-filled page
             if i % 12 != 11:
                 fig.suptitle("visit = {}  ccd = {}".format(visit, ccd))
                 fig.tight_layout()
                 fig.subplots_adjust(top=0.94)
-                pdf.savefig(fig)
+                pdf.savefig(fig, dpi=100)
 
     def _getConfigName(self):
         return None
@@ -344,11 +344,11 @@ class GoodnessOfFitAnalysisTask(pipeBase.CmdLineTask):
                                        extent=wfExtent)
                 if i % nrow == nrow-1:
                     fig.tight_layout()
-                    pdf.savefig(fig)
+                    pdf.savefig(fig, dpi=100)
                 i += 1
             if i % nrow != nrow-1:
                 fig.tight_layout()
-                pdf.savefig(fig)
+                pdf.savefig(fig, dpi=100)
 
     def _getConfigName(self):
         return None
@@ -423,7 +423,7 @@ class FitParamAnalysisTask(pipeBase.CmdLineTask):
                 plotCameraOutline(axes, expRef.get("camera"))
                 fig.tight_layout()
                 fig.colorbar(scatPlot)
-                pdf.savefig(fig)
+                pdf.savefig(fig, dpi=100)
 
     @classmethod
     def _makeArgumentParser(cls, *args, **kwargs):
@@ -544,7 +544,7 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
                     except KeyError:
                         pass
                 fig.tight_layout()
-                pdf.savefig(fig)
+                pdf.savefig(fig, dpi=200)
 
     @staticmethod
     def imshow(img, det, axes, **kwargs):
@@ -668,7 +668,7 @@ class PsfMomentsAnalysisTask(pipeBase.CmdLineTask):
                 plotCameraOutline(axes, camera)
                 fig.tight_layout()
                 fig.colorbar(scatPlot)
-                pdf.savefig(fig)
+                pdf.savefig(fig, dpi=100)
 
             # A bit of matplotlib trickery to get the whisker plot to align
             # with the scatter plots generated above.
@@ -690,7 +690,7 @@ class PsfMomentsAnalysisTask(pipeBase.CmdLineTask):
                 scale_units = 'xy',
                 width = 0.002)
             plotCameraOutline(axes, camera)
-            pdf.savefig(fig)
+            pdf.savefig(fig, dpi=100)
 
     @classmethod
     def _makeArgumentParser(cls, *args, **kwargs):

@@ -34,6 +34,7 @@ import lsst.afw.image as afwImage
 import lsst.afw.geom as afwGeom
 from .zernikeFitter import ZernikeFitter
 from .selectDonut import SelectDonutTask
+from .utilities import _getGoodPupilShape, cutoutDonut
 
 display = lsstDebug.Info(__name__).display
 
@@ -232,7 +233,7 @@ class FitDonutTask(pipeBase.Task):
 
         visitInfo = icExp.getInfo().getVisitInfo()
         camera = sensorRef.get("camera")
-        pupilSize, npix = self._getGoodPupilShape(
+        pupilSize, npix = _getGoodPupilShape(
             camera.telescopeDiameter,
             wavelength,
             self.config.stampSize*pixelScale)
@@ -240,7 +241,8 @@ class FitDonutTask(pipeBase.Task):
         nquarter = icExp.getDetector().getOrientation().getNQuarter()
         if self.config.flip:
             nquarter += 2
-        donutSrc = self.selectDonut.run(icSrc)
+        donutSrc = self.selectDonut.run(
+            icSrc, icExp, self.config.stampSize, self.config.ignoredPixelMask)
 
         for i, record in enumerate(donutSrc):
             self.log.info("Fitting donut {} of {}".format(
@@ -251,7 +253,8 @@ class FitDonutTask(pipeBase.Task):
             fpY = record['base_FPPosition_y']
             self.log.info("Donut is at {}, {}".format(fpX, fpY))
             subMaskedImage = afwMath.rotateImageBy90(
-                self.cutoutDonut(imX, imY, icExp), nquarter)
+                cutoutDonut(imX, imY, icExp, self.config.stampSize),
+                nquarter)
             pupil = pupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
 
             result = None
@@ -291,54 +294,6 @@ class FitDonutTask(pipeBase.Task):
                     record.set(self.covMatKey, result.covar.astype(np.float32))
 
         return pipeBase.Struct(donutSrc=donutSrc)
-
-    @staticmethod
-    def _getGoodPupilShape(diam, wavelength, donutSize):
-        """!Estimate an appropriate size and shape for the pupil array.
-
-        @param[in]  diam    Diameter of aperture in meters.
-        @param[in]  wavelength  Wavelength of light in nanometers.
-        @param[in]  donutSize   Size of donut image as afwGeom.Angle.
-        @returns    pupilSize, pupilScale in meters.
-        """
-        # pupilSize equal to twice the aperture diameter Nyquist samples the
-        # focal plane.
-        pupilSize = 2*diam
-        # Relation between pupil plane size `L` and scale `dL` and focal plane
-        # size `theta` and scale `dtheta` is:
-        # dL = lambda / theta
-        # L = lambda / dtheta
-        # So plug in the donut size for theta and return dL for the scale.
-        pupilScale = wavelength*1e-9/(donutSize.asRadians())  # meters
-        npix = FitDonutTask._getGoodFFTSize(pupilSize//pupilScale)
-        return pupilSize, npix
-
-    @staticmethod
-    def _getGoodFFTSize(n):
-        # Return nearest larger power_of_2 or 3*power_of_2
-        exp2 = int(np.ceil(np.log(n)/np.log(2)))
-        exp3 = int(np.ceil((np.log(n) - np.log(3))/np.log(2)))
-        return min(2**exp2, 3*2**exp3)
-
-    def cutoutDonut(self, x, y, icExp):
-        """!Cut out a postage stamp image of a single donut
-
-        @param x  X-coordinate of postage stamp center
-        @param y  Y-coordinate of postage stamp center
-        @param icExp  Exposure from which to cutout stamp.
-        @returns  MaskedImage with cutout.
-        """
-        point = afwGeom.Point2I(int(x), int(y))
-        box = afwGeom.Box2I(point, point)
-        box.grow(afwGeom.Extent2I(
-            self.config.stampSize//2, self.config.stampSize//2))
-
-        subMaskedImage = icExp.getMaskedImage().Factory(
-            icExp.getMaskedImage(),
-            box,
-            afwImage.PARENT
-        )
-        return subMaskedImage
 
     def displayFitter(self, zfitter, pupil):
         data = zfitter.maskedImage.getImage().getArray()

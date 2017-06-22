@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 #
 # LSST Data Management System
 #
@@ -36,35 +35,13 @@ import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
 import lsst.afw.geom as afwGeom
 from lsst.afw.geom import arcseconds
-import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.afw.cameraGeom as afwCameraGeom
 from lsst.daf.persistence.safeFileIo import safeMakeDir
 from lsst.daf.persistence import NoResults
 from lsst.pipe.drivers.utils import getDataRef, ButlerTaskRunner
 from .zernikeFitter import ZernikeFitter
-from .fitDonut import FitDonutTask
-
-
-def cutoutDonut(x, y, icExp, stampSize):
-    """!Cut out a postage stamp image of a single donut
-
-    @param x  X-coordinate of postage stamp center
-    @param y  Y-coordinate of postage stamp center
-    @param icExp  Exposure from which to cutout stamp.
-    @param stampSize  Size of cutout.
-    @returns  MaskedImage with cutout.
-    """
-    point = afwGeom.Point2I(int(x), int(y))
-    box = afwGeom.Box2I(point, point)
-    box.grow(afwGeom.Extent2I(stampSize//2, stampSize//2))
-
-    subMaskedImage = icExp.getMaskedImage().Factory(
-        icExp.getMaskedImage(),
-        box,
-        afwImage.PARENT
-    )
-    return subMaskedImage
+from .utilities import cutoutDonut, markGoodDonuts, _getGoodPupilShape
 
 
 def subplots(nrow, ncol, **kwargs):
@@ -120,7 +97,7 @@ def donutDataModelWfPsf(donut, donutConfig, icExp, camera,
         nquarter += 2
     visitInfo = icExp.getInfo().getVisitInfo()
 
-    pupilSize, pupilNPix = FitDonutTask._getGoodPupilShape(
+    pupilSize, pupilNPix = _getGoodPupilShape(
         camera.telescopeDiameter, wavelength, donutConfig.stampSize*pixelScale)
     pupilFactory = camera.getPupilFactory(visitInfo, pupilSize, pupilNPix)
 
@@ -151,7 +128,7 @@ def donutDataModelWfPsf(donut, donutConfig, icExp, camera,
             shape = (donutConfig.stampSize, donutConfig.stampSize))
 
     # Use less well-sampled pupil for in-focus PSF
-    psfPupilSize, psfPupilNPix = FitDonutTask._getGoodPupilShape(
+    psfPupilSize, psfPupilNPix = _getGoodPupilShape(
         camera.telescopeDiameter, wavelength, 2*psfStampSize*psfPixelScale)
     psfPupilFactory = camera.getPupilFactory(
         visitInfo, psfPupilSize, psfPupilNPix)

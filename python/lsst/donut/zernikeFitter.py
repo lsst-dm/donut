@@ -47,7 +47,8 @@ class ZernikeFitter(object):
     model images given parameters.
     """
     def __init__(self, zmax, wavelength, pupil, diam, pixelScale=None,
-                 maskedImage=None, ignoredPixelMask=None, **kwargs):
+                 jacobian=None, maskedImage=None, ignoredPixelMask=None,
+                 **kwargs):
         """
         @param zmax        Maximum Zernike order to fit.
         @param wavelength  Wavelength to use for model.
@@ -59,6 +60,10 @@ class ZernikeFitter(object):
         @param pixelScale  pixel scale of maskedImage as afwGeom.Angle, or
                            None if using this class to draw models without
                            doing a fit.
+        @param jacobian    An optional 2x2 Jacobian distortion matrix to apply
+                           to the forward model.  Note that this is relative to
+                           the pixelScale above.  Default is the identity
+                           matrix.
         @param ignoredPixelMask  Names of mask planes to ignore when fitting.
                                  May be None if simply using this class to draw
                                  models without doing a fit.
@@ -75,6 +80,9 @@ class ZernikeFitter(object):
                                         bitmask) == 0)
         if pixelScale is not None:
             self.pixelScale = pixelScale.asArcseconds()
+        if jacobian is None:
+            jacobian = np.eye(2, dtype=np.float64)
+        self.jacobian = jacobian
         self.zmax = zmax
         self.wavelength = wavelength
         self.aper = galsim.Aperture(
@@ -133,13 +141,18 @@ class ZernikeFitter(object):
                                  aper = self.aper,
                                  aberrations = aberrations)
 
-    def constructModelImage(self, params=None, pixelScale=None, shape=None):
+    def constructModelImage(self, params=None, pixelScale=None, jacobian=None,
+                            shape=None):
         """Construct model image from parameters
 
         @param params      lmfit.Parameters object or python dictionary with
                            param values to use, or None to use self.params
         @param pixelScale  pixel scale in arcseconds to use for model image,
                            or None to use self.pixelScale.
+        @param jacobian    An optional 2x2 Jacobian distortion matrix to apply
+                           to the forward model.  Note that this is relative to
+                           the pixelScale above.  Use self.jacobian if this is
+                           None.
         @param shape       (nx, ny) shape for model image, or None to use
                            the shape of self.maskedImage
         @returns       numpy array image
@@ -150,6 +163,8 @@ class ZernikeFitter(object):
             shape = self.maskedImage.getImage().getArray().shape
         if pixelScale is None:
             pixelScale = self.pixelScale
+        if jacobian is None:
+            jacobian = self.jacobian
         try:
             v = params.valuesdict()
         except AttributeError:
@@ -163,10 +178,11 @@ class ZernikeFitter(object):
             psf = optPsf
         psf = psf.shift(v['dx'], v['dy'])*v['flux']
 
+        wcs = galsim.JacobianWCS(*list(pixelScale*jacobian.ravel()))
         modelImg = psf.drawImage(
             nx = shape[0],
             ny = shape[1],
-            scale = pixelScale)
+            wcs = wcs)
         return modelImg.array
 
     def constructWavefrontImage(self, params=None):

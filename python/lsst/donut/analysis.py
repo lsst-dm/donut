@@ -42,6 +42,7 @@ from lsst.daf.persistence import NoResults
 from lsst.pipe.drivers.utils import getDataRef, ButlerTaskRunner
 from .zernikeFitter import ZernikeFitter
 from .utilities import cutoutDonut, markGoodDonuts, _getGoodPupilShape
+from .utilities import _getJacobian
 
 
 def subplots(nrow, ncol, **kwargs):
@@ -105,6 +106,15 @@ def donutDataModelWfPsf(donut, donutConfig, icExp, camera,
     fpY = donut['base_FPPosition_y']
     pupil = pupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
 
+    detector = icExp.getDetector()
+    point = afwGeom.Point2D(donut.getX(), donut.getY())
+    jacobian = _getJacobian(detector, point)
+    # Need to apply quarter rotations to jacobian
+    th = np.pi/2*nquarter
+    sth, cth = np.sin(th), np.cos(th)
+    rot = np.array([[cth, sth], [-sth, cth]])
+    jacobian = np.dot(rot.T, np.dot(jacobian, rot))
+
     params = {}
     keys = ['r0', 'dx', 'dy', 'flux']
     for j in range(4, zmax + 1):
@@ -125,6 +135,7 @@ def donutDataModelWfPsf(donut, donutConfig, icExp, camera,
         model = zfitter.constructModelImage(
             params = params,
             pixelScale = pixelScale.asArcseconds(),
+            jacobian = jacobian,
             shape = (donutConfig.stampSize, donutConfig.stampSize))
 
     # Use less well-sampled pupil for in-focus PSF
@@ -147,6 +158,7 @@ def donutDataModelWfPsf(donut, donutConfig, icExp, camera,
     psf = zfitter.constructModelImage(
         params = params,
         pixelScale = psfPixelScale.asArcseconds(),
+        jacobian = jacobian,
         shape = (psfStampSize, psfStampSize))
     wf = zfitter.constructWavefrontImage(params=params)
     wf = wf[wf.shape[0]//4:3*wf.shape[0]//4, wf.shape[0]//4:3*wf.shape[0]//4]
@@ -171,20 +183,6 @@ def moments(image, scale=1.0):
     e = np.hypot(e1, e2)
     return dict(I0=I0, Ix=Ix, Iy=Iy, Ixx=Ixx, Ixy=Ixy, Iyy=Iyy,
                 e1=e1, e2=e2, rsqr=rsqr, r=r, e=e)
-
-
-def markGoodDonuts(donutSrc, icExp, stampSize, ignoredPixelMask):
-    good = []
-    for donut in donutSrc:
-        subMaskedImage = cutoutDonut(
-            donut.getX(), donut.getY(), icExp, stampSize)
-        mask = subMaskedImage.getMask()
-        bitmask = reduce(lambda x, y: x | mask.getPlaneBitMask(y),
-                         ignoredPixelMask, 0x0)
-        badpix = (np.bitwise_and(mask.getArray().astype(np.uint16),
-                                bitmask) != 0)
-        good.append(badpix.sum() == 0)
-    return np.array(good, dtype=np.bool)
 
 
 class SelectionAnalysisConfig(pexConfig.Config):
@@ -253,14 +251,14 @@ class SelectionAnalysisTask(pipeBase.CmdLineTask):
                     fig.suptitle("visit = {}  ccd = {}".format(visit, ccd))
                     fig.tight_layout()
                     fig.subplots_adjust(top=0.94)
-                    pdf.savefig(fig)
+                    pdf.savefig(fig, dpi=100)
                 i += 1
             # Clean up potentially partially-filled page
             if i % 12 != 11:
                 fig.suptitle("visit = {}  ccd = {}".format(visit, ccd))
                 fig.tight_layout()
                 fig.subplots_adjust(top=0.94)
-                pdf.savefig(fig)
+                pdf.savefig(fig, dpi=100)
 
     def _getConfigName(self):
         return None
@@ -346,11 +344,11 @@ class GoodnessOfFitAnalysisTask(pipeBase.CmdLineTask):
                                        extent=wfExtent)
                 if i % nrow == nrow-1:
                     fig.tight_layout()
-                    pdf.savefig(fig)
+                    pdf.savefig(fig, dpi=100)
                 i += 1
             if i % nrow != nrow-1:
                 fig.tight_layout()
-                pdf.savefig(fig)
+                pdf.savefig(fig, dpi=100)
 
     def _getConfigName(self):
         return None
@@ -425,7 +423,7 @@ class FitParamAnalysisTask(pipeBase.CmdLineTask):
                 plotCameraOutline(axes, expRef.get("camera"))
                 fig.tight_layout()
                 fig.colorbar(scatPlot)
-                pdf.savefig(fig)
+                pdf.savefig(fig, dpi=100)
 
     @classmethod
     def _makeArgumentParser(cls, *args, **kwargs):
@@ -546,7 +544,7 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
                     except KeyError:
                         pass
                 fig.tight_layout()
-                pdf.savefig(fig)
+                pdf.savefig(fig, dpi=200)
 
     @staticmethod
     def imshow(img, det, axes, **kwargs):
@@ -670,7 +668,7 @@ class PsfMomentsAnalysisTask(pipeBase.CmdLineTask):
                 plotCameraOutline(axes, camera)
                 fig.tight_layout()
                 fig.colorbar(scatPlot)
-                pdf.savefig(fig)
+                pdf.savefig(fig, dpi=100)
 
             # A bit of matplotlib trickery to get the whisker plot to align
             # with the scatter plots generated above.
@@ -692,7 +690,7 @@ class PsfMomentsAnalysisTask(pipeBase.CmdLineTask):
                 scale_units = 'xy',
                 width = 0.002)
             plotCameraOutline(axes, camera)
-            pdf.savefig(fig)
+            pdf.savefig(fig, dpi=100)
 
     @classmethod
     def _makeArgumentParser(cls, *args, **kwargs):

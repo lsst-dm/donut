@@ -27,6 +27,7 @@ import numpy as np
 import lsst.afw.image as afwImage
 import lsst.afw.geom as afwGeom
 import lsst.afw.cameraGeom as cameraGeom
+import lsst.afw.table as afwTable
 
 
 def cutoutDonut(x, y, icExp, stampSize):
@@ -164,3 +165,105 @@ def zernikeRotMatrix(jmax, theta):
             elif mi == -mj:
                 M[i, j] = np.sin(mj * theta.asRadians())
     return M
+
+
+def rotateSrcCoords(donutSrc, theta):
+    """!Return a new donutSrc catalog with columns added to hold Zernike
+    coefficients and focal plane coordinates as if these were measured under
+    a rotation of the focal plane by theta.
+
+    @param donutSrc  Input donut SourceCatalog
+    @oaram theta     afwGeom.Angle specifying the rotation to apply
+    @returns  A new sourceCatalog
+    """
+    schema = donutSrc.schema
+    schemaMapper = afwTable.SchemaMapper(schema, schema)
+    for key, field in schema:
+        schemaMapper.addMapping(key, field.getName())
+    newSchema = schemaMapper.editOutputSchema()
+
+    # Collect parameter names to transform
+    paramNames = ["r0", "dx", "dy", "flux"]
+    j = 4
+    paramName = "z{}".format(j)
+    while "zfit_"+paramName in schema:
+        paramNames.append(paramName)
+        j += 1
+        paramName = "z{}".format(j)
+    jmax = j - 1
+
+    # Make keys for old columns and new columns
+    paramKeys = []
+    newParamKeys = []
+    for paramName in paramNames:
+        newParamKeys.append(
+            newSchema.addField(
+                "zfit_{}_rot".format(paramName),
+                type = np.float32,
+                doc = "{} param for rotated zfit".format(paramName)
+            )
+        )
+        paramKeys.append(schema.find("zfit_{}".format(paramName)).key)
+    newParamNames = [paramName+"_rot" for paramName in paramNames]
+    newParamKey = afwTable.ArrayFKey(newParamKeys)
+    paramKey = afwTable.ArrayFKey(paramKeys)
+    newCovKey = afwTable.CovarianceMatrixXfKey.addFields(
+        newSchema,
+        "zfit",
+        newParamNames,
+        ""
+    )
+    covKey = afwTable.CovarianceMatrixXfKey(newSchema["zfit"], paramNames)
+    fpKey = afwTable.ArrayDKey(
+        [schema.find("base_FPPosition_x").key,
+         schema.find("base_FPPosition_y").key]
+    )
+    newFpKeyList = [
+        newSchema.addField(
+            "base_FPPosition_rot_x",
+            type = np.float64),
+        newSchema.addField(
+            "base_FPPosition_rot_y",
+            type = np.float64)]
+    newFpKey = afwTable.ArrayDKey(newFpKeyList)
+
+    # Copy unrotated columns
+    newDonutSrc = afwTable.SourceCatalog(newSchema)
+    newDonutSrc.reserve(len(donutSrc))
+    for donut in donutSrc:
+        newDonutSrc.addNew().assign(donut, schemaMapper)
+
+    # Collect items to be transformed
+    params = np.zeros((len(donutSrc), len(paramNames)), dtype=np.float64)
+    covs = np.zeros(
+        (len(donutSrc), len(paramNames), len(paramNames)),
+        dtype=np.float64
+    )
+    fps = np.zeros((len(donutSrc), 2), dtype=np.float64)
+    for i, r in enumerate(donutSrc):
+        params[i] = r.get(paramKey)
+        covs[i] = r.get(covKey)
+        fps[i] = r.get(fpKey)
+
+    # Assemble transformation matrix
+    M = np.eye(len(paramNames), dtype=np.float64)
+    rotZ = zernikeRotMatrix(jmax, theta)
+    # ignore first four parameters, and Zernike indices smaller than 4
+    M[4:, 4:] = rotZ[3:, 3:]
+    # transform dx and dy as normal though
+    cth, sth = np.cos(theta.asRadians()), np.sin(theta.asRadians())
+    rot2 = np.array([[cth, sth], [-sth, cth]], dtype=np.float64)
+    M[1:3, 1:3] = rot2
+
+    # Do the transformation
+    newParams = np.dot(M, params.T).T
+    newCovs = np.matmul(np.matmul(M.T, covs), M)
+    newFps = np.dot(rot2, fps.T).T
+
+    # And write into new columns
+    for i, r in enumerate(newDonutSrc):
+        r.set(newParamKey, newParams[i].astype(np.float32))
+        r.set(newCovKey, newCovs[i].astype(np.float32))
+        r.set(newFpKey, newFps[i].astype(np.float64))
+
+    return newDonutSrc

@@ -70,7 +70,7 @@ class FitDonutConfig(pexConfig.Config):
         doc = "Names of mask planes to ignore when fitting donut images",
         dtype = str,
         default = ["SAT", "SUSPECT", "BAD"],
-        itemCheck = lambda x: x in afwImage.MaskU().getMaskPlaneDict().keys()
+        itemCheck = lambda x: x in afwImage.Mask().getMaskPlaneDict().keys()
     )
     flip = pexConfig.Field(
         dtype = bool,

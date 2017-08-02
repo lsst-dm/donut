@@ -120,7 +120,7 @@ def donutDataModelWfPsf(donut, donutConfig, icExp, camera,
     for j in range(4, zmax + 1):
         keys.append('z{}'.format(j))
     for k in keys:
-        params[k] = donut[k]
+        params[k] = donut['zfit_'+k]
     zfitter = ZernikeFitter(
         zmax,
         wavelength,
@@ -403,7 +403,7 @@ class FitParamAnalysisTask(pipeBase.CmdLineTask):
             x.extend([donut['base_FPPosition_x'] for donut in donutSrc])
             y.extend([donut['base_FPPosition_y'] for donut in donutSrc])
             for k, v in iteritems(vals):
-                v.extend(donut[k] for donut in donutSrc)
+                v.extend(donut['zfit_'+k] for donut in donutSrc)
 
         outputdir = filedir(expRef.getButler(),
                             "donutSrc",

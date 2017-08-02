@@ -21,7 +21,6 @@
 # see <https://www.lsstcorp.org/LegalNotices/>.
 #
 from __future__ import absolute_import, division, print_function
-from future.utils import iteritems
 
 import numpy as np
 from lsst.afw.display.ds9 import mtv
@@ -71,7 +70,7 @@ class FitDonutConfig(pexConfig.Config):
         doc = "Names of mask planes to ignore when fitting donut images",
         dtype = str,
         default = ["SAT", "SUSPECT", "BAD"],
-        itemCheck = lambda x: x in afwImage.MaskU().getMaskPlaneDict().keys()
+        itemCheck = lambda x: x in afwImage.Mask().getMaskPlaneDict().keys()
     )
     flip = pexConfig.Field(
         dtype = bool,
@@ -188,24 +187,22 @@ class FitDonutTask(pipeBase.Task):
         paramNames = ["r0", "dx", "dy", "flux"]
         for i in range(4, max(self.config.zmax) + 1):
             paramNames.append("z{}".format(i))
-        self.paramDict = {}
-        self.sigmaKeys = []
-        self.covKeys = []
-        for i, pi in enumerate(paramNames):
-            self.paramDict[pi] = schema.addField(pi, type=np.float32)
-            self.sigmaKeys.append(
+        paramKeys = []
+        for paramName in paramNames:
+            paramKeys.append(
                 schema.addField(
-                    "{}Sigma".format(pi),
+                    "zfit_"+paramName,
                     type = np.float32,
-                    doc = "uncertainty on {}".format(pi)))
-            for pj in paramNames[:i]:
-                self.covKeys.append(
-                    schema.addField(
-                        "{}_{}_Cov".format(pj, pi),
-                        type = np.float32,
-                        doc = "{},{} covariance".format(pj, pi)))
-        self.covMatKey = afwTable.CovarianceMatrixXfKey(
-            self.sigmaKeys, self.covKeys)
+                    doc = "{} param for Zernike fit".format(paramName)
+                )
+            )
+        self.paramKey = afwTable.ArrayFKey(paramKeys)
+        self.covKey = afwTable.CovarianceMatrixXfKey.addFields(
+            self.schema,
+            "zfit",
+            paramNames,
+            ""
+        )
         self.bicKey = schema.addField("bic", type=np.float32)
         self.chisqrKey = schema.addField("chisqr", type=np.float32)
         self.redchiKey = schema.addField("redchi", type=np.float32)
@@ -294,15 +291,15 @@ class FitDonutTask(pipeBase.Task):
                     self.displayFitter(zfitter, pupil)
             record.set(self.successKey, result.success)
             if result.success:
-                vals = result.params.valuesdict()
-                for paramName, paramKey in iteritems(self.paramDict):
-                    record.set(paramKey, vals[paramName])
+                vals = np.array(result.params.valuesdict().values(),
+                                dtype=np.float32)
+                record.set(self.paramKey, vals)
                 record.set(self.bicKey, result.bic)
                 record.set(self.chisqrKey, result.chisqr)
                 record.set(self.redchiKey, result.redchi)
                 record.set(self.errorbarsKey, bool(result.errorbars))
                 if result.errorbars:
-                    record.set(self.covMatKey, result.covar.astype(np.float32))
+                    record.set(self.covKey, result.covar.astype(np.float32))
 
         return pipeBase.Struct(donutSrc=donutSrc)
 

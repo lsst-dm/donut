@@ -74,8 +74,9 @@ class ZernikeFitter(object):
                 raise ValueError("ignoredPixelMask ")
             self.maskedImage = maskedImage
             mask = self.maskedImage.getMask()
-            bitmask = reduce(lambda x, y: x | mask.getPlaneBitMask(y),
-                             ignoredPixelMask, 0x0)
+            bitmask = 0x0
+            for m in ignoredPixelMask:
+                bitmask |= mask.getPlaneBitMask(m)
             self.good = (np.bitwise_and(mask.getArray().astype(np.uint16),
                                         bitmask) == 0)
         if pixelScale is not None:

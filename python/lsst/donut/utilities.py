@@ -57,10 +57,11 @@ def markGoodDonuts(donutSrc, icExp, stampSize, ignoredPixelMask):
         subMaskedImage = cutoutDonut(
             donut.getX(), donut.getY(), icExp, stampSize)
         mask = subMaskedImage.getMask()
-        bitmask = reduce(lambda x, y: x | mask.getPlaneBitMask(y),
-                         ignoredPixelMask, 0x0)
+        bitmask = 0x0
+        for m in ignoredPixelMask:
+            bitmask |= mask.getPlaneBitMask(m)
         badpix = (np.bitwise_and(mask.getArray().astype(np.uint16),
-                                bitmask) != 0)
+                                 bitmask) != 0)
         good.append(badpix.sum() == 0)
     return np.array(good, dtype=np.bool)
 
@@ -251,8 +252,9 @@ def rotateSrcCoords(donutSrc, theta):
     # ignore first four parameters, and Zernike indices smaller than 4
     M[4:, 4:] = rotZ[3:, 3:]
     # transform dx and dy as normal though
-    cth, sth = np.cos(theta.asRadians()), np.sin(theta.asRadians())
-    rot2 = np.array([[cth, sth], [-sth, cth]], dtype=np.float64)
+    # we can actually just extract the 2d rotation matrix from the j=2 and j=3
+    # columns of the full Zernike rotation matrix
+    rot2 = rotZ[1:3, 1:3]
     M[1:3, 1:3] = rot2
 
     # Do the transformation

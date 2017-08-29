@@ -21,6 +21,7 @@
 # see <https://www.lsstcorp.org/LegalNotices/>.
 #
 from __future__ import absolute_import, division, print_function
+from builtins import input
 
 import numpy as np
 from lsst.afw.display.ds9 import mtv
@@ -291,7 +292,7 @@ class FitDonutTask(pipeBase.Task):
                     self.displayFitter(zfitter, pupil)
             record.set(self.successKey, result.success)
             if result.success:
-                vals = np.array(result.params.valuesdict().values(),
+                vals = np.array(list(result.params.valuesdict().values()),
                                 dtype=np.float32)
                 record.set(self.paramKey, vals)
                 record.set(self.bicKey, result.bic)
@@ -315,4 +316,4 @@ class FitDonutTask(pipeBase.Task):
             frame = 3, title = "resid")
         mtv(afwImage.ImageD(pupil.illuminated.astype(np.float64)),
             frame = 4, title = "pupil")
-        raw_input("Press Enter to continue...")
+        input("Press Enter to continue...")

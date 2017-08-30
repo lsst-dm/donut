@@ -22,15 +22,15 @@
 #
 from __future__ import absolute_import, division, print_function
 
-from lsst.donut.processDonut import ProcessDonutTask
+from lsst.donut.fitDonut import FitDonutTask
 from lsst.pex.config import Config, Field, ConfigurableField, ListField
 from lsst.ctrl.pool.parallel import BatchParallelTask
 
 
 class DonutDriverConfig(Config):
-    processDonut = ConfigurableField(
-        target = ProcessDonutTask,
-        doc = "Donut processing task"
+    fitDonut = ConfigurableField(
+        target = FitDonutTask,
+        doc = "Donut fitting task"
     )
     ignoreCcdList = ListField(
         dtype = int,
@@ -59,10 +59,10 @@ class DonutDriverTask(BatchParallelTask):
         """
         BatchParallelTask.__init__(self, *args, **kwargs)
         self.ignoreCcds = set(self.config.ignoreCcdList)
-        self.makeSubtask("processDonut")
+        self.makeSubtask("fitDonut")
 
     def run(self, sensorRef):
-        """Process a single CCD box of donuts, with scatter-gather-scatter
+        """Fit a single CCD box of donuts, with scatter-gather-scatter
         using MPI.
         """
         if sensorRef.dataId[self.config.ccdKey] in self.ignoreCcds:
@@ -71,4 +71,4 @@ class DonutDriverTask(BatchParallelTask):
             return None
 
         with self.logOperation("processing %s" % (sensorRef.dataId,)):
-            return self.processDonut.run(sensorRef)
+            return self.fitDonut.run(sensorRef)

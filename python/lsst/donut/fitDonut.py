@@ -123,7 +123,7 @@ class FitDonutConfig(pexConfig.Config):
     )
 
 
-class FitDonutTask(pipeBase.Task):
+class FitDonutTask(pipeBase.CmdLineTask):
     """!Fit a donut images with a wavefront forward model.
 
     @anchor FitDonutTask_
@@ -135,10 +135,10 @@ class FitDonutTask(pipeBase.Task):
 
     @section donut_FitDonut_IO  Invoking the Task
 
-    This task is intended for use as a subtask, primarily from processDonut.
-
-    You can execute the `run` method by supplying a sensorRef and optionally
-    that reference's `icSrc` and `icExp` datasets.
+    This task is normallly invokable as a CmdLineTask, though it can also be
+    invoked as a subtask using the `run` method, in which case a sensorRef and
+    optionally that reference's `icSrc` and `icExp` datasets should be passed
+    as arguments.
 
     @section donut_FitDonut_Config  Configuration parameters
 
@@ -162,14 +162,14 @@ class FitDonutTask(pipeBase.Task):
         import lsstDebug
         def DebugInfo(name):
             di = lsstDebug.getInfo(name)
-            if name == "lsst.donut.FitDonut":
+            if name == "lsst.donut.fitDonut":
                 di.display = True
 
             return di
 
         lsstDebug.Info = DebugInfo
     @endcode
-    into your `debug.py` file and run `processDonut.py` with the `--debug`
+    into your `debug.py` file and run `fitDonut.py` with the `--debug`
     flag.
     """
     ConfigClass = FitDonutConfig
@@ -302,6 +302,7 @@ class FitDonutTask(pipeBase.Task):
                 if result.errorbars:
                     record.set(self.covKey, result.covar.astype(np.float32))
 
+        sensorRef.put(donutSrc, "donutSrc")
         return pipeBase.Struct(donutSrc=donutSrc)
 
     def displayFitter(self, zfitter, pupil):

@@ -22,6 +22,6 @@
 # see <https://www.lsstcorp.org/LegalNotices/>.
 #
 
-from lsst.donut.processDonut import ProcessDonutTask
+from lsst.donut.fitDonut import FitDonutTask
 
-ProcessDonutTask.parseAndRun()
+FitDonutTask.parseAndRun()

@@ -169,8 +169,33 @@ class FitDonutTask(pipeBase.CmdLineTask):
 
         lsstDebug.Info = DebugInfo
     @endcode
-    into your `debug.py` file and run `fitDonut.py` with the `--debug`
-    flag.
+    into your `debug.py` file and run `fitDonut.py` with the `--debug` flag.
+
+    @section donut_FitDonutTask_Input An example of preparing data for use with fitDonut
+
+    FitDonutTask fits a forward model based on Fourier optics to out-of-focus
+    star images.  The task is invoked by running fitDonut.py on the output of
+    processCcd.py, which needs to be invoked first to perform basic ISR and
+    detection tasks.  Running processCcd.py on donut images is highly likely to
+    fail with its default configuration, as the normal assumptions about PSFs
+    are not satified for these images.  We recommend running processCcd.py
+    (or equivalently, singleFrameDriver) with the following configuration to
+    enable the task to complete and produce the necessary output for running
+    fitDonut.py.
+
+    @code{.py}
+        import lsst.pipe.tasks.processCcd
+        assert type(config)==lsst.pipe.tasks.processCcd.ProcessCcdConfig, 'config is of type %s.%s instead of lsst.pipe.tasks.processCcd.ProcessCcdConfig' % (type(config).__module__, type(config).__name__)
+        config.charImage.doMeasurePsf = False
+        config.charImage.psfIterations = 1
+        config.charImage.doApCorr = False
+        config.charImage.installSimplePsf.width = 61
+        config.charImage.installSimplePsf.fwhm = 20.0
+        config.charImage.detection.thresholdValue = 1.5
+        config.charImage.detection.doTempLocalBackground = False
+        config.charImage.doWriteExposure = True
+        config.doCalibrate = False
+    @endcode
     """
     ConfigClass = FitDonutConfig
     _DefaultName = "fitDonut"

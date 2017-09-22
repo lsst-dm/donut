@@ -185,6 +185,13 @@ def moments(image, scale=1.0):
                 e1=e1, e2=e2, rsqr=rsqr, r=r, e=e)
 
 
+def getDonutConfig(ref):
+    try:
+        donutConfig = ref.get("fitDonut_config")
+    except NoResults:
+        donutConfig = ref.get("donutDriver_config").fitDonut
+    return donutConfig
+
 class SelectionAnalysisConfig(pexConfig.Config):
     pass
 
@@ -202,11 +209,7 @@ class SelectionAnalysisTask(pipeBase.CmdLineTask):
         ccd = dataId['ccd']
         self.log.info("Running on visit {}, ccd {}".format(visit, ccd))
 
-        try:
-            donutConfig = sensorRef.get("processDonut_config").fitDonut
-        except NoResults:
-            donutConfig = (sensorRef.get("donutDriver_config")
-                           .processDonut.fitDonut)
+        donutConfig = getDonutConfig(sensorRef)
         try:
             donutSrc = sensorRef.get("donutSrc")
             icSrc = sensorRef.get("icSrc")
@@ -291,11 +294,7 @@ class GoodnessOfFitAnalysisTask(pipeBase.CmdLineTask):
         ccd = dataId['ccd']
         self.log.info("Running on visit {}, ccd {}".format(visit, ccd))
 
-        try:
-            donutConfig = sensorRef.get("processDonut_config").fitDonut
-        except NoResults:
-            donutConfig = (sensorRef.get("donutDriver_config")
-                           .processDonut.fitDonut)
+        donutConfig = getDonutConfig(sensorRef)
         try:
             donutSrc = sensorRef.get('donutSrc')
             assert len(donutSrc) > 0
@@ -379,11 +378,7 @@ class FitParamAnalysisTask(pipeBase.CmdLineTask):
         visit = expRef.dataId['visit']
         self.log.info("Running on visit {}".format(visit))
 
-        try:
-            donutConfig = expRef.get("processDonut_config").fitDonut
-        except NoResults:
-            donutConfig = (expRef.get("donutDriver_config")
-                           .processDonut.fitDonut)
+        donutConfig = getDonutConfig(expRef)
         x = []
         y = []
         vals = collections.OrderedDict()
@@ -472,11 +467,7 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
         self.log.info("Running on visit {}".format(visit))
         camera = expRef.get("camera")
 
-        try:
-            donutConfig = expRef.get("processDonut_config").fitDonut
-        except NoResults:
-            donutConfig = (expRef.get("donutDriver_config")
-                           .processDonut.fitDonut)
+        donutConfig = getDonutConfig(expRef)
 
         outputdir = filedir(expRef.getButler(),
                             "donutSrc",
@@ -616,11 +607,7 @@ class PsfMomentsAnalysisTask(pipeBase.CmdLineTask):
         self.log.info("Running on visit {}".format(visit))
         camera = expRef.get("camera")
 
-        try:
-            donutConfig = expRef.get("processDonut_config").fitDonut
-        except NoResults:
-            donutConfig = (expRef.get("donutDriver_config")
-                           .processDonut.fitDonut)
+        donutConfig = getDonutConfig(expRef)
 
         x = []
         y = []

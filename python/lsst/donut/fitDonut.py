@@ -294,7 +294,10 @@ class FitDonutTask(pipeBase.CmdLineTask):
         return wavelength
 
     def fitOneDonut(self, subMaskedImage, wavelength, pupil, camera,
-                    pixelScale, jacobian, alpha):
+                    pixelScale, jacobian, alpha, all_jmax=False):
+        if all_jmax:
+            results = []
+            zfitters = []
         result = None
         for jmax in self.config.jmax:
             self.log.info("Fitting with jmax = {}".format(jmax))
@@ -321,6 +324,11 @@ class FitDonutTask(pipeBase.CmdLineTask):
             self.log.debug(zfitter.report(show_correl=False))
             if display:
                 self.displayFitter(zfitter, pupil)
+            if all_jmax:
+                results.append(result)
+                zfitters.append(zfitter)
+        if all_jmax:
+            return results, zfitters
         return result, zfitter
 
     def getPupilFactory(self, camera, wavelength, pixelScale, visitInfo,
@@ -337,7 +345,8 @@ class FitDonutTask(pipeBase.CmdLineTask):
     def fitOneRecord(self, record, icExp, camera,
                      nquarter=None, pupilFactory=None,
                      wavelength=None, detector=None, pixelScale=None,
-                     alpha=1.0, oversampling=1.0, padFactor=1.0):
+                     alpha=1.0, oversampling=1.0, padFactor=1.0,
+                     all_jmax=False):
         if pixelScale is None:
             pixelScale = icExp.getWcs().pixelScale()
         if detector is None:
@@ -373,7 +382,8 @@ class FitDonutTask(pipeBase.CmdLineTask):
         pupil = pupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
 
         return self.fitOneDonut(subMaskedImage, wavelength, pupil, camera,
-                                pixelScale, jacobian, alpha=alpha)
+                                pixelScale, jacobian, alpha=alpha,
+                                all_jmax=all_jmax)
 
     def displayFitter(self, zfitter, pupil):
         data = zfitter.maskedImage.getImage().getArray()

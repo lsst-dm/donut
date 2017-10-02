@@ -66,23 +66,26 @@ def markGoodDonuts(donutSrc, icExp, stampSize, ignoredPixelMask):
     return np.array(good, dtype=np.bool)
 
 
-def _getGoodPupilShape(diam, wavelength, donutSize):
+def _getGoodPupilShape(diam, wavelength, donutSize,
+                       oversampling=1.0, padFactor=1.0):
     """!Estimate an appropriate size and shape for the pupil array.
 
     @param[in]  diam    Diameter of aperture in meters.
     @param[in]  wavelength  Wavelength of light in nanometers.
     @param[in]  donutSize   Size of donut image as afwGeom.Angle.
+    @param[in]  oversampling  Amount by which to additionally oversample the image.
+    @param[in]  padFactor    Amount by which to additionally pad the image.
     @returns    pupilSize, pupilScale in meters.
     """
     # pupilSize equal to twice the aperture diameter Nyquist samples the
     # focal plane.
-    pupilSize = 2*diam
+    pupilSize = 2*diam*oversampling
     # Relation between pupil plane size `L` and scale `dL` and focal plane
     # size `theta` and scale `dtheta` is:
     # dL = lambda / theta
     # L = lambda / dtheta
     # So plug in the donut size for theta and return dL for the scale.
-    pupilScale = wavelength*1e-9/(donutSize.asRadians())  # meters
+    pupilScale = wavelength*1e-9/(donutSize.asRadians())/padFactor  # meters
     npix = _getGoodFFTSize(pupilSize//pupilScale)
     return pupilSize, npix
 

@@ -246,13 +246,7 @@ class FitDonutTask(pipeBase.CmdLineTask):
 
         pixelScale = icExp.getWcs().pixelScale()
         self.log.info("display is {}".format(display))
-
-        wavelength = self.config.wavelength
-        if wavelength is None:
-            wavelength = icExp.getFilter().getFilterProperty().getLambdaEff()
-            self.log.info(
-                ("Using filter effective wavelength of {} nm"
-                 .format(wavelength)))
+        wavelength = self.getWavelength(icExp)
 
         visitInfo = icExp.getInfo().getVisitInfo()
         camera = sensorRef.get("camera")
@@ -262,59 +256,19 @@ class FitDonutTask(pipeBase.CmdLineTask):
             wavelength,
             self.config.stampSize*pixelScale)
         pupilFactory = camera.getPupilFactory(visitInfo, pupilSize, npix)
-        nquarter = icExp.getDetector().getOrientation().getNQuarter()
+        nquarter = detector.getOrientation().getNQuarter()
         if self.config.flip:
             nquarter += 2
+
         donutSrc = self.selectDonut.run(
             icSrc, icExp, self.config.stampSize, self.config.ignoredPixelMask)
 
         for i, record in enumerate(donutSrc):
             self.log.info("Fitting donut {} of {}".format(
                 i + 1, len(donutSrc)))
-            imX = record.getX()
-            imY = record.getY()
-
-            point = afwGeom.Point2D(record.getX(), record.getY())
-            jacobian = _getJacobian(detector, point)
-            # Need to apply quarter rotations transformation to Jacobian.
-            th = np.pi/2*nquarter
-            sth, cth = np.sin(th), np.cos(th)
-            rot = np.array([[cth, sth], [-sth, cth]])
-            jacobian = np.dot(rot.T, np.dot(jacobian, rot))
-
-            fpX = record['base_FPPosition_x']
-            fpY = record['base_FPPosition_y']
-            self.log.info("Donut is at {}, {}".format(fpX, fpY))
-            subMaskedImage = afwMath.rotateImageBy90(
-                cutoutDonut(imX, imY, icExp, self.config.stampSize),
-                nquarter)
-            pupil = pupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
-
-            result = None
-            for zmax in self.config.zmax:
-                self.log.info("Fitting with zmax = {}".format(zmax))
-                zfitter = ZernikeFitter(
-                    zmax, wavelength, pupil, camera.telescopeDiameter,
-                    maskedImage = subMaskedImage,
-                    pixelScale = pixelScale,
-                    jacobian = jacobian,
-                    ignoredPixelMask = self.config.ignoredPixelMask,
-                    xtol = self.config.fitTolerance)
-                zfitter.initParams(
-                    z4Init = self.config.z4Init,
-                    z4Range = self.config.z4Range,
-                    zRange = self.config.zRange,
-                    r0Init = self.config.r0Init,
-                    r0Range = self.config.r0Range,
-                    centroidRange = self.config.centroidRange,
-                    fluxRelativeRange = self.config.fluxRelativeRange)
-                if result is not None:
-                    zfitter.params.update(result.params)
-                zfitter.fit()
-                result = zfitter.result
-                self.log.debug(zfitter.report(show_correl=False))
-                if display:
-                    self.displayFitter(zfitter, pupil)
+            result, _ = self.fitOneRecord(
+                record, icExp, camera, detector, nquarter, pupilFactory,
+                wavelength, pixelScale)
             record.set(self.successKey, result.success)
             if result.success:
                 vals = np.array(list(result.params.valuesdict().values()),
@@ -329,6 +283,97 @@ class FitDonutTask(pipeBase.CmdLineTask):
 
         sensorRef.put(donutSrc, "donutSrc")
         return pipeBase.Struct(donutSrc=donutSrc)
+
+    def getWavelength(self, icExp):
+        wavelength = self.config.wavelength
+        if wavelength is None:
+            wavelength = icExp.getFilter().getFilterProperty().getLambdaEff()
+            self.log.info(
+                ("Using filter effective wavelength of {} nm"
+                 .format(wavelength)))
+        return wavelength
+
+    def fitOneDonut(self, subMaskedImage, wavelength, pupil, camera,
+                    pixelScale, jacobian, alpha):
+        result = None
+        for jmax in self.config.jmax:
+            self.log.info("Fitting with jmax = {}".format(jmax))
+            zfitter = ZernikeFitter(
+                jmax, wavelength, pupil, camera.telescopeDiameter,
+                alpha = alpha,
+                maskedImage = subMaskedImage,
+                pixelScale = pixelScale,
+                jacobian = jacobian,
+                ignoredPixelMask = self.config.ignoredPixelMask,
+                xtol = self.config.fitTolerance)
+            zfitter.initParams(
+                z4Init = self.config.z4Init,
+                z4Range = self.config.z4Range,
+                zRange = self.config.zRange,
+                r0Init = self.config.r0Init,
+                r0Range = self.config.r0Range,
+                centroidRange = self.config.centroidRange,
+                fluxRelativeRange = self.config.fluxRelativeRange)
+            if result is not None:
+                zfitter.params.update(result.params)
+            zfitter.fit()
+            result = zfitter.result
+            self.log.debug(zfitter.report(show_correl=False))
+            if display:
+                self.displayFitter(zfitter, pupil)
+        return result, zfitter
+
+    def getPupilFactory(self, camera, wavelength, pixelScale, visitInfo,
+                        oversampling=1.0, padFactor=1.0):
+        pupilSize, npix = _getGoodPupilShape(
+            camera.telescopeDiameter,
+            wavelength,
+            self.config.stampSize*pixelScale,
+            oversampling=oversampling,
+            padFactor=padFactor)
+        pupilFactory = camera.getPupilFactory(visitInfo, pupilSize, npix)
+        return pupilFactory
+
+    def fitOneRecord(self, record, icExp, camera,
+                     nquarter=None, pupilFactory=None,
+                     wavelength=None, detector=None, pixelScale=None,
+                     alpha=1.0, oversampling=1.0, padFactor=1.0):
+        if pixelScale is None:
+            pixelScale = icExp.getWcs().pixelScale()
+        if detector is None:
+            detector = icExp.getDetector()
+        if wavelength is None:
+            wavelength = self.getWavelength(icExp)
+        if pupilFactory is None:
+            visitInfo = icExp.getInfo().getVisitInfo()
+            pupilFactory = self.getPupilFactory(
+                camera, wavelength*alpha, pixelScale, visitInfo,
+                oversampling, padFactor
+            )
+        if nquarter is None:
+            nquarter = detector.getOrientation().getNQuarter()
+
+        imX = record.getX()
+        imY = record.getY()
+
+        point = afwGeom.Point2D(record.getX(), record.getY())
+        jacobian = _getJacobian(detector, point)
+        # Need to apply quarter rotations transformation to Jacobian.
+        th = np.pi/2*nquarter
+        sth, cth = np.sin(th), np.cos(th)
+        rot = np.array([[cth, sth], [-sth, cth]])
+        jacobian = np.dot(rot.T, np.dot(jacobian, rot))
+
+        fpX = record['base_FPPosition_x']
+        fpY = record['base_FPPosition_y']
+        self.log.info("Donut is at {}, {}".format(fpX, fpY))
+        subMaskedImage = afwMath.rotateImageBy90(
+            cutoutDonut(imX, imY, icExp, self.config.stampSize),
+            nquarter)
+        pupil = pupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
+
+        return self.fitOneDonut(subMaskedImage, wavelength, pupil, camera,
+                                pixelScale, jacobian, alpha=alpha)
 
     def displayFitter(self, zfitter, pupil):
         data = zfitter.maskedImage.getImage().getArray()

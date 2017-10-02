@@ -48,7 +48,7 @@ class ZernikeFitter(object):
     """
     def __init__(self, jmax, wavelength, pupil, diam, pixelScale=None,
                  jacobian=None, maskedImage=None, ignoredPixelMask=None,
-                 **kwargs):
+                 alpha=1.0, **kwargs):
         """
         @param jmax        Maximum Zernike order to fit.
         @param wavelength  Wavelength to use for model.
@@ -67,6 +67,7 @@ class ZernikeFitter(object):
         @param ignoredPixelMask  Names of mask planes to ignore when fitting.
                                  May be None if simply using this class to draw
                                  models without doing a fit.
+        @param alpha       Wavelength multiplication factor.
         @param **kwargs    Additional kwargs to pass to lmfit.minimize.
         """
         if maskedImage is not None:
@@ -86,6 +87,7 @@ class ZernikeFitter(object):
         self.jacobian = jacobian
         self.jmax = jmax
         self.wavelength = wavelength
+        self.alpha = alpha
         self.aper = galsim.Aperture(
             diam = diam,
             pupil_plane_im = pupil.illuminated.astype(np.int16),
@@ -137,10 +139,10 @@ class ZernikeFitter(object):
         aberrations = [0, 0, 0, 0]
         for i in range(4, self.jmax + 1):
             aberrations.append(params['z{}'.format(i)])
-        return galsim.OpticalPSF(lam = self.wavelength,
+        return galsim.OpticalPSF(lam = self.wavelength*self.alpha,
                                  diam = self.aper.diam,
                                  aper = self.aper,
-                                 aberrations = aberrations)
+                                 aberrations = [a/self.alpha for a in aberrations])
 
     def constructModelImage(self, params=None, pixelScale=None, jacobian=None,
                             shape=None):
@@ -206,7 +208,7 @@ class ZernikeFitter(object):
             v = params
         optPsf = self._getOptPsf(v)
         out = np.zeros_like(aper.u)
-        out[aper.illuminated] = optPsf._psf.screen_list.wavefront(aper)
+        out[aper.illuminated] = optPsf._psf.screen_list.wavefront(aper)*self.alpha
         mask = np.logical_not(aper.illuminated)
         return np.ma.masked_array(out, mask)
 

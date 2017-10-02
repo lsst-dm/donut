@@ -46,11 +46,11 @@ class ZernikeFitter(object):
     This class can also be used without a target image to fit, in order to draw
     model images given parameters.
     """
-    def __init__(self, zmax, wavelength, pupil, diam, pixelScale=None,
+    def __init__(self, jmax, wavelength, pupil, diam, pixelScale=None,
                  jacobian=None, maskedImage=None, ignoredPixelMask=None,
                  **kwargs):
         """
-        @param zmax        Maximum Zernike order to fit.
+        @param jmax        Maximum Zernike order to fit.
         @param wavelength  Wavelength to use for model.
         @param pupil       afwCameraGeom.Pupil for model.
         @param diam        Pupil diameter.
@@ -84,7 +84,7 @@ class ZernikeFitter(object):
         if jacobian is None:
             jacobian = np.eye(2, dtype=np.float64)
         self.jacobian = jacobian
-        self.zmax = zmax
+        self.jmax = jmax
         self.wavelength = wavelength
         self.aper = galsim.Aperture(
             diam = diam,
@@ -120,7 +120,7 @@ class ZernikeFitter(object):
                    min = fluxRelativeRange[0]*flux,
                    max = fluxRelativeRange[1]*flux)
         params.add('z4', z4Init, min=z4Range[0], max=z4Range[1])
-        for i in range(5, self.zmax+1):
+        for i in range(5, self.jmax+1):
             params.add('z{}'.format(i), 0.0, min=zRange[0], max=zRange[1])
         self.params = params
 
@@ -135,7 +135,7 @@ class ZernikeFitter(object):
 
     def _getOptPsf(self, params):
         aberrations = [0, 0, 0, 0]
-        for i in range(4, self.zmax + 1):
+        for i in range(4, self.jmax + 1):
             aberrations.append(params['z{}'.format(i)])
         return galsim.OpticalPSF(lam = self.wavelength,
                                  diam = self.aper.diam,

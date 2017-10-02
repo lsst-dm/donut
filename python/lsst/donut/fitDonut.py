@@ -48,7 +48,7 @@ class FitDonutConfig(pexConfig.Config):
               - High SNR donuts.
               """
     )
-    zmax = pexConfig.ListField(
+    jmax = pexConfig.ListField(
         dtype = int,
         default = (4, 11, 21),
         doc = "List indicating the maximum Zernike term to fit in each "
@@ -211,7 +211,7 @@ class FitDonutTask(pipeBase.CmdLineTask):
         # Note that order of paramNames here must be consistent with order of
         # lmfit.Parameters object setup in zernikeFitter
         paramNames = ["r0", "dx", "dy", "flux"]
-        for i in range(4, max(self.config.zmax) + 1):
+        for i in range(4, max(self.config.jmax) + 1):
             paramNames.append("z{}".format(i))
         paramKeys = []
         for paramName in paramNames:

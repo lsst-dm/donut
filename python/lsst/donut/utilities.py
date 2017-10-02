@@ -96,15 +96,8 @@ def _getGoodFFTSize(n):
 
 def _getJacobian(detector, point):
     # Converting from PIXELS to TAN_PIXELS
-    pixTransform = detector.getTransform(cameraGeom.PIXELS)
-    tanPixTransform = detector.getTransform(cameraGeom.TAN_PIXELS)
-
-    transform = afwGeom.MultiXYTransform([
-        afwGeom.InvertedXYTransform(pixTransform),
-        tanPixTransform])
-    affineTransform = transform.linearizeForwardTransform(point)
-    linearTransform = affineTransform.getLinear()
-    return linearTransform.getParameterVector().reshape(2, 2)
+    transform = detector.getTransform(cameraGeom.PIXELS, cameraGeom.TAN_PIXELS)
+    return transform.getJacobian(point)
 
 
 # Start off with the Zernikes up to j=15

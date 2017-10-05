@@ -79,6 +79,11 @@ class FitDonutConfig(pexConfig.Config):
         doc = "Flip image 180 degrees to switch between fitting intra-focal "
               "and extra-focal donuts."
     )
+    doJacobian = pexConfig.Field(
+        dtype = bool,
+        default = False,
+        doc = "Apply in-focus jacobian to model when fitting to data."
+    )
     fitTolerance = pexConfig.Field(
         dtype = float,
         default = 1e-2,
@@ -366,7 +371,10 @@ class FitDonutTask(pipeBase.CmdLineTask):
         imY = record.getY()
 
         point = afwGeom.Point2D(record.getX(), record.getY())
-        jacobian = _getJacobian(detector, point)
+        if self.config.doJacobian:
+            jacobian = _getJacobian(detector, point)
+        else:
+            jacobian = np.eye(2)
         # Need to apply quarter rotations transformation to Jacobian.
         th = np.pi/2*nquarter
         sth, cth = np.sin(th), np.cos(th)

@@ -213,6 +213,7 @@ class FitDonutTask(pipeBase.CmdLineTask):
         if schema is None:
             schema = afwTable.SourceTable.makeMinimalSchema()
         self.schema = schema
+        self.idKey = schema.extract('id')['id'].getKey()
         # Note that order of paramNames here must be consistent with order of
         # lmfit.Parameters object setup in zernikeFitter
         paramNames = ["r0", "dx", "dy", "flux"]
@@ -265,26 +266,32 @@ class FitDonutTask(pipeBase.CmdLineTask):
         if self.config.flip:
             nquarter += 2
 
-        donutSrc = self.selectDonut.run(
+        selectSrc = self.selectDonut.run(
             icSrc, icExp, self.config.stampSize, self.config.ignoredPixelMask)
+        nDonuts = len(selectSrc)
 
-        for i, record in enumerate(donutSrc):
+        donutSrc = afwTable.SourceCatalog(self.schema)
+        donutSrc.reserve(nDonuts)
+
+        for i, record in enumerate(selectSrc):
             self.log.info("Fitting donut {} of {}".format(
-                i + 1, len(donutSrc)))
+                i + 1, nDonuts))
             result, _ = self.fitOneRecord(
-                record, icExp, camera, detector, nquarter, pupilFactory,
-                wavelength, pixelScale)
-            record.set(self.successKey, result.success)
+                record, icExp, camera, nquarter=nquarter, pupilFactory=pupilFactory,
+                wavelength=wavelength, detector=detector, pixelScale=pixelScale)
+            donutRecord = donutSrc.addNew()
+            donutRecord.set(self.idKey, record.getId())
+            donutRecord.set(self.successKey, result.success)
             if result.success:
                 vals = np.array(list(result.params.valuesdict().values()),
                                 dtype=np.float32)
-                record.set(self.paramKey, vals)
-                record.set(self.bicKey, result.bic)
-                record.set(self.chisqrKey, result.chisqr)
-                record.set(self.redchiKey, result.redchi)
-                record.set(self.errorbarsKey, bool(result.errorbars))
+                donutRecord.set(self.paramKey, vals)
+                donutRecord.set(self.bicKey, result.bic)
+                donutRecord.set(self.chisqrKey, result.chisqr)
+                donutRecord.set(self.redchiKey, result.redchi)
+                donutRecord.set(self.errorbarsKey, bool(result.errorbars))
                 if result.errorbars:
-                    record.set(self.covKey, result.covar.astype(np.float32))
+                    donutRecord.set(self.covKey, result.covar.astype(np.float32))
 
         sensorRef.put(donutSrc, "donutSrc")
         return pipeBase.Struct(donutSrc=donutSrc)

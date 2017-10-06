@@ -48,12 +48,13 @@ class FitDonutConfig(pexConfig.Config):
               - High SNR donuts.
               """
     )
-    jmax = pexConfig.ListField(
+    jmaxs = pexConfig.ListField(
         dtype = int,
         default = (4, 11, 21),
         doc = "List indicating the maximum Zernike term to fit in each "
               "fitting iteration.  The result at the end of each iteration "
               "will be used as the initial guess for the subsequent iteration."
+              "  Results for each jmax will be saved."
     )
     wavelength = pexConfig.Field(
         dtype = float,
@@ -214,32 +215,51 @@ class FitDonutTask(pipeBase.CmdLineTask):
             schema = afwTable.SourceTable.makeMinimalSchema()
         self.schema = schema
         self.idKey = schema.extract('id')['id'].getKey()
-        # Note that order of paramNames here must be consistent with order of
-        # lmfit.Parameters object setup in zernikeFitter
-        paramNames = ["r0", "dx", "dy", "flux"]
-        for i in range(4, max(self.config.jmax) + 1):
-            paramNames.append("z{}".format(i))
-        paramKeys = []
-        for paramName in paramNames:
-            paramKeys.append(
-                schema.addField(
-                    "zfit_"+paramName,
-                    type = np.float32,
-                    doc = "{} param for Zernike fit".format(paramName)
+        self.keyDicts = []
+        for jmax in self.config.jmaxs:
+            keyDict = {}
+            # Note that order of paramNames here must be consistent with order
+            # of lmfit.Parameters object setup in zernikeFitter
+            paramNames = ["r0", "dx", "dy", "flux"]
+            for i in range(4, jmax + 1):
+                paramNames.append("z{}".format(i))
+            fitKeys = []
+            for paramName in paramNames:
+                fitKeys.append(
+                    schema.addField(
+                        "zfit_jmax{}_{}".format(jmax, paramName),
+                        type = np.float32,
+                        doc = "{} param for Zernike fit".format(paramName)
+                    )
                 )
+            keyDict['param'] = afwTable.ArrayFKey(fitKeys)
+            keyDict['cov'] = afwTable.CovarianceMatrixXfKey.addFields(
+                self.schema,
+                "zfit_jmax{}".format(jmax),
+                paramNames,
+                ""
             )
-        self.paramKey = afwTable.ArrayFKey(paramKeys)
-        self.covKey = afwTable.CovarianceMatrixXfKey.addFields(
-            self.schema,
-            "zfit",
-            paramNames,
-            ""
-        )
-        self.bicKey = schema.addField("bic", type=np.float32)
-        self.chisqrKey = schema.addField("chisqr", type=np.float32)
-        self.redchiKey = schema.addField("redchi", type=np.float32)
-        self.successKey = schema.addField("success", type="Flag")
-        self.errorbarsKey = schema.addField("errorbars", type="Flag")
+            keyDict['bic'] = schema.addField(
+                "zfit_jmax{}_bic".format(jmax),
+                type=np.float32
+            )
+            keyDict['chisqr'] = schema.addField(
+                "zfit_jmax{}_chisqr".format(jmax),
+                type=np.float32
+            )
+            keyDict['redchi'] = schema.addField(
+                "zfit_jmax{}_redchi".format(jmax),
+                type=np.float32
+            )
+            keyDict['success'] = schema.addField(
+                "zfit_jmax{}_success".format(jmax),
+                type="Flag"
+            )
+            keyDict['errorbars'] = schema.addField(
+                "zfit_jmax{}_errorbars".format(jmax),
+                type="Flag"
+            )
+            self.keyDicts.append(keyDict)
 
     @pipeBase.timeMethod
     def run(self, sensorRef, icSrc=None, icExp=None):
@@ -276,22 +296,27 @@ class FitDonutTask(pipeBase.CmdLineTask):
         for i, record in enumerate(selectSrc):
             self.log.info("Fitting donut {} of {}".format(
                 i + 1, nDonuts))
-            result, _ = self.fitOneRecord(
-                record, icExp, camera, nquarter=nquarter, pupilFactory=pupilFactory,
-                wavelength=wavelength, detector=detector, pixelScale=pixelScale)
+            results, _ = self.fitOneRecord(
+                record, icExp, camera, nquarter=nquarter,
+                pupilFactory=pupilFactory, wavelength=wavelength,
+                detector=detector, pixelScale=pixelScale)
             donutRecord = donutSrc.addNew()
             donutRecord.set(self.idKey, record.getId())
-            donutRecord.set(self.successKey, result.success)
-            if result.success:
-                vals = np.array(list(result.params.valuesdict().values()),
-                                dtype=np.float32)
-                donutRecord.set(self.paramKey, vals)
-                donutRecord.set(self.bicKey, result.bic)
-                donutRecord.set(self.chisqrKey, result.chisqr)
-                donutRecord.set(self.redchiKey, result.redchi)
-                donutRecord.set(self.errorbarsKey, bool(result.errorbars))
-                if result.errorbars:
-                    donutRecord.set(self.covKey, result.covar.astype(np.float32))
+
+            for result, keyDict in zip(results, self.keyDicts):
+                donutRecord.set(keyDict['success'], result.success)
+                if result.success:
+                    vals = np.array(list(result.params.valuesdict().values()),
+                                    dtype=np.float32)
+                    donutRecord.set(keyDict['param'], vals)
+                    donutRecord.set(keyDict['bic'], result.bic)
+                    donutRecord.set(keyDict['chisqr'], result.chisqr)
+                    donutRecord.set(keyDict['redchi'], result.redchi)
+                    donutRecord.set(
+                        keyDict['errorbars'], bool(result.errorbars))
+                    if result.errorbars:
+                        donutRecord.set(
+                            keyDict['cov'], result.covar.astype(np.float32))
 
         sensorRef.put(donutSrc, "donutSrc")
         return pipeBase.Struct(donutSrc=donutSrc)
@@ -306,12 +331,11 @@ class FitDonutTask(pipeBase.CmdLineTask):
         return wavelength
 
     def fitOneDonut(self, subMaskedImage, wavelength, pupil, camera,
-                    pixelScale, jacobian, alpha, all_jmax=False):
-        if all_jmax:
-            results = []
-            zfitters = []
+                    pixelScale, jacobian, alpha):
+        results = []
+        zfitters = []
         result = None
-        for jmax in self.config.jmax:
+        for jmax in self.config.jmaxs:
             self.log.info("Fitting with jmax = {}".format(jmax))
             zfitter = ZernikeFitter(
                 jmax, wavelength, pupil, camera.telescopeDiameter,
@@ -336,12 +360,9 @@ class FitDonutTask(pipeBase.CmdLineTask):
             self.log.debug(zfitter.report(show_correl=False))
             if display:
                 self.displayFitter(zfitter, pupil)
-            if all_jmax:
-                results.append(result)
-                zfitters.append(zfitter)
-        if all_jmax:
-            return results, zfitters
-        return result, zfitter
+            results.append(result)
+            zfitters.append(zfitter)
+        return results, zfitters
 
     def getPupilFactory(self, camera, wavelength, pixelScale, visitInfo,
                         oversampling=1.0, padFactor=1.0):
@@ -357,8 +378,7 @@ class FitDonutTask(pipeBase.CmdLineTask):
     def fitOneRecord(self, record, icExp, camera,
                      nquarter=None, pupilFactory=None,
                      wavelength=None, detector=None, pixelScale=None,
-                     alpha=1.0, oversampling=1.0, padFactor=1.0,
-                     all_jmax=False):
+                     alpha=1.0, oversampling=1.0, padFactor=1.0):
         if pixelScale is None:
             pixelScale = icExp.getWcs().pixelScale()
         if detector is None:
@@ -397,8 +417,7 @@ class FitDonutTask(pipeBase.CmdLineTask):
         pupil = pupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
 
         return self.fitOneDonut(subMaskedImage, wavelength, pupil, camera,
-                                pixelScale, jacobian, alpha=alpha,
-                                all_jmax=all_jmax)
+                                pixelScale, jacobian, alpha=alpha)
 
     def displayFitter(self, zfitter, pupil):
         data = zfitter.maskedImage.getImage().getArray()

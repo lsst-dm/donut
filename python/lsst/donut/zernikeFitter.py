@@ -131,8 +131,12 @@ class ZernikeModeler(object):
         self.pixelScale = kwargs.pop('pixelScale', self.pixelScale)
         self.stampSize = kwargs.pop('stampSize', self.stampSize)
 
-    def getModel(self, **kwargs):
+    def getGSObject(self, **kwargs):
+        self.updatePupil(**kwargs)
+        self.updatePsf(**kwargs)
+        return self.psf
 
+    def getModel(self, **kwargs):
         self.updatePupil(**kwargs)
         self.updatePsf(**kwargs)
         self.updateDrawParams(**kwargs)

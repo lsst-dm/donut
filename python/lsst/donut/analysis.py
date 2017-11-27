@@ -76,22 +76,15 @@ def filedir(butler, dataset, dataId):
     return os.path.dirname(butler.get(dataset+"_filename", dataId)[0])
 
 
-def donutDataModelWfPsf(donut, donutConfig, icExp, camera,
-                        psfStampSize=None, psfPixelScale=None,
-                        psfOnly=False):
-    """Return numpy arrays of donut cutout, corresponding model, wavefront,
-    and implied in-focus PSF.
+def donutDataModel(donutRecord, icRecord, icExp, donutConfig, camera):
+    """Return numpy arrays of donut cutout, corresponding model, and wavefront.
     """
-    if psfStampSize is None:
-        psfStampSize = donutConfig.stampSize
     pixelScale = icExp.getWcs().pixelScale()
-    if psfPixelScale is None:
-        psfPixelScale = pixelScale
 
     wavelength = donutConfig.wavelength
     if wavelength is None:
         wavelength = icExp.getFilter().getFilterProperty().getLambdaEff()
-    zmax = donutConfig.zmax[-1]
+    jmax = donutConfig.jmaxs[-1]
 
     nquarter = icExp.getDetector().getOrientation().getNQuarter()
     if donutConfig.flip:
@@ -102,69 +95,45 @@ def donutDataModelWfPsf(donut, donutConfig, icExp, camera,
         camera.telescopeDiameter, wavelength, donutConfig.stampSize*pixelScale)
     pupilFactory = camera.getPupilFactory(visitInfo, pupilSize, pupilNPix)
 
-    fpX = donut['base_FPPosition_x']
-    fpY = donut['base_FPPosition_y']
+    fpX = icRecord['base_FPPosition_x']
+    fpY = icRecord['base_FPPosition_y']
     pupil = pupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
 
     detector = icExp.getDetector()
-    point = afwGeom.Point2D(donut.getX(), donut.getY())
-    jacobian = _getJacobian(detector, point)
-    # Need to apply quarter rotations to jacobian
-    th = np.pi/2*nquarter
-    sth, cth = np.sin(th), np.cos(th)
-    rot = np.array([[cth, sth], [-sth, cth]])
-    jacobian = np.dot(rot.T, np.dot(jacobian, rot))
+    point = afwGeom.Point2D(icRecord.getX(), icRecord.getY())
+    if donutConfig.doJacobian:
+        jacobian = _getJacobian(detector, point)
+        # Need to apply quarter rotations to jacobian
+        th = np.pi/2*nquarter
+        sth, cth = np.sin(th), np.cos(th)
+        rot = np.array([[cth, sth], [-sth, cth]])
+        jacobian = np.dot(rot.T, np.dot(jacobian, rot))
+    else:
+        jacobian = np.eye(2)
 
     params = {}
     keys = ['r0', 'dx', 'dy', 'flux']
-    for j in range(4, zmax + 1):
+    for j in range(4, jmax + 1):
         keys.append('z{}'.format(j))
     for k in keys:
-        params[k] = donut['zfit_'+k]
+        params[k] = donutRecord['zfit_jmax{}_{}'.format(jmax, k)]
     zfitter = ZernikeFitter(
-        zmax,
+        jmax,
         wavelength,
         pupil,
         camera.telescopeDiameter)
 
-    if not psfOnly:
-        maskedImage = cutoutDonut(donut.getX(), donut.getY(), icExp,
-                                  donutConfig.stampSize)
-        maskedImage = afwMath.rotateImageBy90(maskedImage, nquarter)
-        data = maskedImage.getImage().getArray()
-        model = zfitter.constructModelImage(
-            params = params,
-            pixelScale = pixelScale.asArcseconds(),
-            jacobian = jacobian,
-            shape = (donutConfig.stampSize, donutConfig.stampSize))
-
-    # Use less well-sampled pupil for in-focus PSF
-    psfPupilSize, psfPupilNPix = _getGoodPupilShape(
-        camera.telescopeDiameter, wavelength, 2*psfStampSize*psfPixelScale)
-    psfPupilFactory = camera.getPupilFactory(
-        visitInfo, psfPupilSize, psfPupilNPix)
-    psfPupil = psfPupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
-    zfitter.aper = galsim.Aperture(
-        diam = camera.telescopeDiameter,
-        pupil_plane_im = psfPupil.illuminated.astype(np.int16),
-        pupil_plane_scale = psfPupil.scale,
-        pupil_plane_size = psfPupil.size)
-
-    params['z4'] = 0.0
-    params['dx'] = 0.0
-    params['dy'] = 0.0
-    params['flux'] = 1.0
-    del params['r0']
-    psf = zfitter.constructModelImage(
+    maskedImage = cutoutDonut(icRecord.getX(), icRecord.getY(), icExp,
+                              donutConfig.stampSize)
+    maskedImage = afwMath.rotateImageBy90(maskedImage, nquarter)
+    data = maskedImage.getImage().getArray()
+    model = zfitter.constructModelImage(
         params = params,
-        pixelScale = psfPixelScale.asArcseconds(),
+        pixelScale = pixelScale.asArcseconds(),
         jacobian = jacobian,
-        shape = (psfStampSize, psfStampSize))
-    wf = zfitter.constructWavefrontImage(params=params)
-    wf = wf[wf.shape[0]//4:3*wf.shape[0]//4, wf.shape[0]//4:3*wf.shape[0]//4]
-    if psfOnly:
-        return psf
-    return data, model, wf, psf
+        shape = (donutConfig.stampSize, donutConfig.stampSize))
+
+    return data, model
 
 
 def moments(image, scale=1.0):
@@ -214,8 +183,10 @@ class SelectionAnalysisTask(pipeBase.CmdLineTask):
             donutSrc = sensorRef.get("donutSrc")
             icSrc = sensorRef.get("icSrc")
             assert len(icSrc) > 0
-        except:
+        except NoResults:
+            self.log.debug("Could not load donutSrc or icSrc")
             return
+        self.log.info("Found {} donuts to plot".format(len(icSrc)))
         icExp = sensorRef.get("icExp")
 
         x = icSrc.getX()
@@ -238,7 +209,7 @@ class SelectionAnalysisTask(pipeBase.CmdLineTask):
             for si in reversed(np.argsort(s2n)):
                 if i % 12 == 0:
                     fig, axes = subplots(4, 3, figsize=(8.5, 11))
-                src = icSrc[si]
+                src = icSrc[int(si)]
                 cmap = 'viridis' if src['id'] in donutSrc['id'] else 'inferno'
                 axes.ravel()[i%12].imshow(
                     (cutoutDonut(x[si], y[si], icExp, donutConfig.stampSize)
@@ -295,52 +266,45 @@ class GoodnessOfFitAnalysisTask(pipeBase.CmdLineTask):
         self.log.info("Running on visit {}, ccd {}".format(visit, ccd))
 
         donutConfig = getDonutConfig(sensorRef)
+
         try:
+            icSrc = sensorRef.get('icSrc')
             donutSrc = sensorRef.get('donutSrc')
-            assert len(donutSrc) > 0
-        except:
+        except NoResults:
+            self.log.debug("Could not find one of icSrc, donutSrc")
             return
+        self.log.info("Found {} donuts to plot".format(len(donutSrc)))
+        assert len(donutSrc) > 0
         icExp = sensorRef.get('icExp')
         camera = sensorRef.get('camera')
 
         outputdir = filedir(sensorRef.getButler(), "donutSrc", dataId)
         plotdir = os.path.abspath(os.path.join(outputdir, "..", "plots"))
+        print(plotdir)
         safeMakeDir(plotdir)
         outfn = os.path.join(
             plotdir, "donutGoodnessOfFit-{:07d}-{:03d}.pdf".format(visit, ccd))
         pixelScale = icExp.getWcs().pixelScale()
         donutExtent = [0.5*donutConfig.stampSize*pixelScale.asArcseconds()*e
                        for e in [-1, 1, -1, 1]]
-        psfExtent = [0.5*self.config.psfStampSize*e*self.config.psfPixelScale
-                     for e in [-1, 1, -1, 1]]
         wfExtent = [0.5*camera.telescopeDiameter*e for e in [-1, 1, -1, 1]]
-        nrow = 7
-        ncol = 5
+        kwargs = {'cmap':'viridis', 'interpolation':'nearest', 'extent':donutExtent}
+        nrow = 5
+        ncol = 3
         with PdfPages(outfn) as pdf:
             i = 0
-            for donut in donutSrc:
+            for donutRecord in donutSrc:
+                icRecord = icSrc.find(donutRecord.getId())
                 if i % nrow == 0:
                     fig, axes = subplots(nrow, ncol, figsize=(8.5, 11))
-                data, model, wf, psf = donutDataModelWfPsf(
-                    donut, donutConfig, icExp, camera,
-                    psfStampSize = self.config.psfStampSize,
-                    psfPixelScale = self.config.psfPixelScale*arcseconds)
+                data, model = donutDataModel(
+                    donutRecord, icRecord, icExp, donutConfig, camera)
                 resid = data - model
-                axes[i%nrow, 0].imshow(data, cmap='viridis',
-                                       interpolation='nearest',
-                                       extent=donutExtent)
-                axes[i%nrow, 1].imshow(model, cmap='viridis',
-                                       interpolation='nearest',
-                                       extent=donutExtent)
-                axes[i%nrow, 2].imshow(resid, cmap='viridis',
-                                       interpolation='nearest',
-                                       extent=donutExtent)
-                axes[i%nrow, 3].imshow(psf, cmap='viridis',
-                                       interpolation='nearest',
-                                       extent=psfExtent)
-                axes[i%nrow, 4].imshow(wf, cmap='viridis',
-                                       interpolation='nearest',
-                                       extent=wfExtent)
+
+                axes[i%nrow, 0].imshow(data, **kwargs)
+                axes[i%nrow, 1].imshow(model, **kwargs)
+                axes[i%nrow, 2].imshow(resid, **kwargs)
+
                 if i % nrow == nrow-1:
                     fig.tight_layout()
                     pdf.savefig(fig, dpi=100)
@@ -382,23 +346,25 @@ class FitParamAnalysisTask(pipeBase.CmdLineTask):
         x = []
         y = []
         vals = collections.OrderedDict()
-        zmax = donutConfig.zmax[-1]
-        for k in ['r0']+['z{}'.format(z) for z in range(4, zmax + 1)]:
+        jmax = donutConfig.jmaxs[-1]
+        for k in ['r0']+['z{}'.format(z) for z in range(4, jmax + 1)]:
             vals[k] = []
 
         for dataId in dataIdList.values():
             self.log.info("Loading ccd {}".format(dataId['ccd']))
             sensorRef = getDataRef(butler, dataId)
             donutSrc = sensorRef.get("donutSrc")
+            icSrc = sensorRef.get("icSrc")
             icExp = sensorRef.get("icExp")
-            goodDonuts = markGoodDonuts(
-                donutSrc, icExp,
-                donutConfig.stampSize, donutConfig.ignoredPixelMask)
-            donutSrc = donutSrc.subset(goodDonuts)
-            x.extend([donut['base_FPPosition_x'] for donut in donutSrc])
-            y.extend([donut['base_FPPosition_y'] for donut in donutSrc])
+            # goodDonuts = markGoodDonuts(
+            #     donutSrc, icExp,
+            #     donutConfig.stampSize, donutConfig.ignoredPixelMask)
+            # donutSrc = donutSrc.subset(goodDonuts)
+            import ipdb; ipdb.set_trace()
+            x.extend([icSrc.find(donut.getId())['base_FPPosition_x'] for donut in donutSrc])
+            y.extend([icSrc.find(donut.getId())['base_FPPosition_y'] for donut in donutSrc])
             for k, v in iteritems(vals):
-                v.extend(donut['zfit_'+k] for donut in donutSrc)
+                v.extend(donut['zfit_jmax{}_{}'.format(jmax, k)] for donut in donutSrc)
 
         outputdir = filedir(expRef.getButler(),
                             "donutSrc",
@@ -479,49 +445,38 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
         images = {}
         models = {}
         resids = {}
-        psfs = {}
-        wfs = {}
         for dataId in dataIdList.values():
             ccd = dataId['ccd']
             self.log.info("Loading ccd {}".format(ccd))
             sensorRef = getDataRef(butler, dataId)
             icExp = sensorRef.get("icExp")
             donutSrc = sensorRef.get("donutSrc")
+            icSrc = sensorRef.get("icSrc")
 
             if len(donutSrc) == 0:
                 continue
-            s2n = (donutSrc['base_CircularApertureFlux_25_0_flux'] /
-                   donutSrc['base_CircularApertureFlux_25_0_fluxSigma'])
-            indices = np.arange(len(s2n))
-            goodDonuts = markGoodDonuts(
-                donutSrc, icExp,
-                donutConfig.stampSize, donutConfig.ignoredPixelMask)
-            if len(goodDonuts) < 1:
-                continue
+            s2n = []
+            for donut in donutSrc:
+                icRec = icSrc.find(donut.getId())
+                s2n.append(icRec['base_CircularApertureFlux_25_0_flux'] /
+                           icRec['base_CircularApertureFlux_25_0_fluxSigma'])
 
-            indices = indices[goodDonuts]
-            s2n = s2n[goodDonuts]
-            idx = indices[np.argsort(s2n)[-1]]
-
-            data, model, wf, psf = donutDataModelWfPsf(
-                donutSrc[idx], donutConfig, icExp, camera,
-                psfStampSize = self.config.psfStampSize,
-                psfPixelScale = self.config.psfPixelScale*arcseconds)
+            idx = int(np.argsort(s2n)[-1])
+            donutRecord = donutSrc[idx]
+            icRecord = icSrc.find(donutRecord.getId())
+            data, model = donutDataModel(
+                donutRecord, icRecord, icExp, donutConfig, camera)
             resid = data - model
             images[ccd] = data
             models[ccd] = model
             resids[ccd] = resid
-            psfs[ccd] = psf
-            wfs[ccd] = wf
 
         # Make plots
         datafn = "donutStampData-{:07d}.pdf".format(visit)
         modelfn = "donutStampModel-{:07d}.pdf".format(visit)
         residfn = "donutStampResid-{:07d}.pdf".format(visit)
-        psffn = "donutStampPsf-{:07d}.pdf".format(visit)
-        wffn = "donutStampWavefront-{:07d}.pdf".format(visit)
-        for data, fn in zip((images, models, resids, psfs, wfs),
-                            (datafn, modelfn, residfn, psffn, wffn)):
+        for data, fn in zip((images, models, resids),
+                            (datafn, modelfn, residfn)):
             outfn = os.path.join(plotdir, fn)
             with PdfPages(outfn) as pdf:
                 fig, axes = subplots(1, 1, figsize=(8, 6.2))
@@ -563,127 +518,6 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
         # Pop doBatch keyword before passing it along to the argument parser
         kwargs.pop("doBatch", False)
         parser = pipeBase.ArgumentParser(name="StampAnalysis",
-                                         *args, **kwargs)
-        parser.add_id_argument("--id", datasetType="donutSrc", level="visit",
-                               help="data ID, e.g. --id visit=12345")
-        return parser
-
-    def _getConfigName(self):
-        return None
-
-    def _getMetadataName(self):
-        return None
-
-
-class PsfMomentsAnalysisConfig(pexConfig.Config):
-    psfStampSize = pexConfig.Field(
-        dtype = int,
-        default = 32,
-        doc = "Size of PSF stamp in pixels"
-    )
-    psfPixelScale = pexConfig.Field(
-        dtype = float,
-        default = 0.025,
-        doc = "Pixel scale of PSF stamp in arcsec"
-    )
-
-
-class PsfMomentsAnalysisTask(pipeBase.CmdLineTask):
-    ConfigClass = PsfMomentsAnalysisConfig
-    _DefaultName = "PsfMomentsAnalysisTask"
-    RunnerClass = ButlerTaskRunner
-
-    def __init__(self, *args, **kwargs):
-        pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
-
-    def run(self, expRef, butler):
-        """Do moments analysis for single exposure
-        """
-        dataIdList = dict([(ccdRef.get("ccdExposureId"), ccdRef.dataId)
-                           for ccdRef in expRef.subItems("ccd")
-                           if ccdRef.datasetExists("donutSrc")])
-        dataIdList = collections.OrderedDict(sorted(dataIdList.items()))
-        visit = expRef.dataId['visit']
-        self.log.info("Running on visit {}".format(visit))
-        camera = expRef.get("camera")
-
-        donutConfig = getDonutConfig(expRef)
-
-        x = []
-        y = []
-        vals = collections.OrderedDict()
-        for k in ['Ixx', 'Ixy', 'Iyy', 'e1', 'e2', 'e', 'rsqr', 'r']:
-            vals[k] = []
-
-        for dataId in dataIdList.values():
-            ccd = dataId['ccd']
-            self.log.info("Processing ccd {}".format(ccd))
-            sensorRef = getDataRef(butler, dataId)
-            icExp = sensorRef.get("icExp")
-            donutSrc = sensorRef.get("donutSrc")
-            goodDonuts = markGoodDonuts(
-                donutSrc, icExp,
-                donutConfig.stampSize, donutConfig.ignoredPixelMask)
-
-            for donut in donutSrc.subset(goodDonuts):
-                psf = donutDataModelWfPsf(
-                    donut, donutConfig, icExp, camera,
-                    psfStampSize = self.config.psfStampSize,
-                    psfPixelScale = self.config.psfPixelScale*arcseconds,
-                    psfOnly=True)
-                mom = moments(psf, self.config.psfPixelScale)
-                x.append(donut['base_FPPosition_x'])
-                y.append(donut['base_FPPosition_y'])
-                for k in vals:
-                    vals[k].append(mom[k])
-
-        outputdir = filedir(expRef.getButler(),
-                            "donutSrc",
-                            dataIdList.values()[0])
-        plotdir = os.path.abspath(os.path.join(outputdir, "..", "plots"))
-        safeMakeDir(plotdir)
-        outfn = os.path.join(
-            plotdir,
-            "donutPsfMoments-{:07d}.pdf".format(visit))
-        with PdfPages(outfn) as pdf:
-            for k, v in iteritems(vals):
-                self.log.info("Plotting {}".format(k))
-                fig, axes = subplots(1, 1, figsize=(8, 6.2))
-                axes = axes.ravel()[0]
-                scatPlot = axes.scatter(x, y, c=v, s=15, linewidths=0.5)
-                axes.set_title(k)
-                plotCameraOutline(axes, camera)
-                fig.tight_layout()
-                fig.colorbar(scatPlot)
-                pdf.savefig(fig, dpi=100)
-
-            # A bit of matplotlib trickery to get the whisker plot to align
-            # with the scatter plots generated above.
-            rect = axes.get_position()
-            fig = Figure(figsize=(8, 6.2))
-            FigureCanvasPdf(fig)
-            axes = fig.add_axes(rect)
-
-            wth = np.arctan2(vals['e2'], vals['e1'])/2
-            wx = vals['e']*np.cos(wth)
-            wy = vals['e']*np.sin(wth)
-            axes.quiver(
-                x, y, wx, wy,
-                headwidth = 0,
-                pivot = 'middle',
-                headlength = 1e-10,  # If zero emits divide-by-zero warnings.
-                headaxislength = 0,
-                minlength = 0,
-                scale_units = 'xy',
-                width = 0.002)
-            plotCameraOutline(axes, camera)
-            pdf.savefig(fig, dpi=100)
-
-    @classmethod
-    def _makeArgumentParser(cls, *args, **kwargs):
-        # Pop doBatch keyword before passing it along to the argument parser
-        kwargs.pop("doBatch", False)
-        parser = pipeBase.ArgumentParser(name="PsfMomentsAnalysis",
                                          *args, **kwargs)
         parser.add_id_argument("--id", datasetType="donutSrc", level="visit",
                                help="data ID, e.g. --id visit=12345")

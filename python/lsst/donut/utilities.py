@@ -51,9 +51,9 @@ def cutoutDonut(x, y, icExp, stampSize):
     return subMaskedImage
 
 
-def markGoodDonuts(donutSrc, icExp, stampSize, ignoredPixelMask):
+def markGoodDonuts(icSrc, icExp, stampSize, ignoredPixelMask):
     good = []
-    for donut in donutSrc:
+    for donut in icSrc:
         subMaskedImage = cutoutDonut(
             donut.getX(), donut.getY(), icExp, stampSize)
         mask = subMaskedImage.getMask()

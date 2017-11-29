@@ -28,6 +28,15 @@ import lsst.afw.image as afwImage
 import lsst.afw.geom as afwGeom
 import lsst.afw.cameraGeom as cameraGeom
 import lsst.afw.table as afwTable
+from lsst.daf.persistence import NoResults
+
+
+def getDonutConfig(ref):
+    try:
+        donutConfig = ref.get("fitDonut_config")
+    except NoResults:
+        donutConfig = ref.get("donutDriver_config").fitDonut
+    return donutConfig
 
 
 def cutoutDonut(x, y, icExp, stampSize):

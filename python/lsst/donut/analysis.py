@@ -42,7 +42,7 @@ from lsst.daf.persistence import NoResults
 from lsst.pipe.drivers.utils import getDataRef, ButlerTaskRunner
 from .zernikeFitter import ZernikeFitter
 from .utilities import cutoutDonut, markGoodDonuts, _getGoodPupilShape
-from .utilities import _getJacobian
+from .utilities import _getJacobian, getDonutConfig
 
 
 def subplots(nrow, ncol, **kwargs):
@@ -121,7 +121,8 @@ def donutDataModel(donutRecord, icRecord, icExp, donutConfig, camera):
         jmax,
         wavelength,
         pupil,
-        camera.telescopeDiameter)
+        camera.telescopeDiameter
+    )
 
     maskedImage = cutoutDonut(icRecord.getX(), icRecord.getY(), icExp,
                               donutConfig.stampSize)
@@ -153,13 +154,6 @@ def moments(image, scale=1.0):
     return dict(I0=I0, Ix=Ix, Iy=Iy, Ixx=Ixx, Ixy=Ixy, Iyy=Iyy,
                 e1=e1, e2=e2, rsqr=rsqr, r=r, e=e)
 
-
-def getDonutConfig(ref):
-    try:
-        donutConfig = ref.get("fitDonut_config")
-    except NoResults:
-        donutConfig = ref.get("donutDriver_config").fitDonut
-    return donutConfig
 
 class SelectionAnalysisConfig(pexConfig.Config):
     pass
@@ -356,11 +350,6 @@ class FitParamAnalysisTask(pipeBase.CmdLineTask):
             donutSrc = sensorRef.get("donutSrc")
             icSrc = sensorRef.get("icSrc")
             icExp = sensorRef.get("icExp")
-            # goodDonuts = markGoodDonuts(
-            #     donutSrc, icExp,
-            #     donutConfig.stampSize, donutConfig.ignoredPixelMask)
-            # donutSrc = donutSrc.subset(goodDonuts)
-            import ipdb; ipdb.set_trace()
             x.extend([icSrc.find(donut.getId())['base_FPPosition_x'] for donut in donutSrc])
             y.extend([icSrc.find(donut.getId())['base_FPPosition_y'] for donut in donutSrc])
             for k, v in iteritems(vals):

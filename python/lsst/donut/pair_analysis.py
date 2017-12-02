@@ -28,19 +28,21 @@ import collections
 
 import numpy as np
 from scipy.spatial import KDTree
-from matplotlib.backends.backend_pdf import PdfPages, FigureCanvasPdf
+from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
+from matplotlib.gridspec import GridSpec
 import matplotlib.patches as patches
 
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
 from lsst.daf.persistence.safeFileIo import safeMakeDir
-from lsst.daf.persistence import Butler, RepositoryArgs, NoResults
+from lsst.daf.persistence import Butler
 import lsst.afw.cameraGeom as afwCameraGeom
 from lsst.afw.geom import arcseconds, Point2D
 
 from .zernikeFitter import ZernikeFitter
 from .utilities import getDonutConfig, _getGoodPupilShape, _getJacobian
+from .utilities import _noll_to_zern
 
 
 def donutCoords(icSrc, donutSrc):
@@ -453,3 +455,112 @@ class PairStampAnalysisTask(PairBaseTask):
             intraIcRecord = catalogs['intraIcSrc'].find(intraId),
             intraDonutRecord = catalogs['intraDonutSrc'].find(intraId)
         )
+
+
+class PairZernikePyramidConfig(PairBaseConfig):
+    pass
+
+
+class PairZernikePyramidTask(PairBaseTask):
+    ConfigClass = PairZernikePyramidConfig
+    _DefaultName = "PairZernikePyramid"
+
+    def __init__(self, *args, **kwargs):
+        pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
+
+    def run(self, extraRef, intraRef=None):
+        extraVisit = extraRef.dataId['visit']
+        self.log.info("Working on extra/intra visits: {}/{}".format(
+            extraRef.dataId['visit'], intraRef.dataId['visit']))
+        extraIdList, intraIdList = self.getIdLists(extraRef, intraRef)
+
+        donutConfig = getDonutConfig(extraRef)
+
+        x = []
+        y = []
+        vals = collections.OrderedDict()
+        jmax = donutConfig.jmaxs[-1]
+        for k in ['z{}'.format(z) for z in range(4, jmax + 1)]:
+            vals[k] = []
+
+        for ccd, eCcdRef in extraIdList.items():
+        # for ccd, eCcdRef in extraIdList.items()[30:50]:
+            try:
+                iCcdRef = intraIdList[ccd]
+            except KeyError:
+                continue
+            self.log.info("Working on ccd {}".format(ccd))
+            catalogs = self.getCatalogs(eCcdRef, iCcdRef)
+            pairs = self.getPairs(catalogs)
+            for pair in pairs:
+                extraId, intraId, donutCoord = pair
+                x.append(donutCoord[0])
+                y.append(donutCoord[1])
+                extraRecord = catalogs['extraDonutSrc'].find(extraId)
+                intraRecord = catalogs['intraDonutSrc'].find(intraId)
+                for k, v in iteritems(vals):
+                    v.append(0.5*(extraRecord['zfit_jmax{}_{}'.format(jmax, k)]
+                                  + intraRecord['zfit_jmax{}_{}'.format(jmax, k)]))
+
+        extraButler = extraRef.getButler()
+        outputdir = os.path.dirname(
+            os.path.join(
+                extraButler.get(
+                    "donutSrc_filename",
+                    visit=extraVisit,
+                    ccd=0
+                )[0]
+            )
+        )
+        plotdir = os.path.abspath(os.path.join(outputdir, "..", "plots"))
+        safeMakeDir(plotdir)
+
+        outfn = os.path.join(
+            plotdir,
+            "donutZernikePyramid-{:07d}.pdf".format(extraVisit))
+
+        nrow = _noll_to_zern(jmax)[0] - 1
+        ncol = nrow + 2
+        gridspec = GridSpec(nrow, ncol)
+
+
+        def shift(pos, amt):
+            return [pos.x0+amt, pos.y0, pos.width, pos.height]
+
+        def shiftAxes(axes, amt):
+            for ax in axes:
+                ax.set_position(shift(ax.get_position(), amt))
+
+        with PdfPages(outfn) as pdf:
+            fig = Figure(figsize=(13, 8))
+            axes = {}
+            shiftLeft = []
+            shiftRight = []
+            for j in range(4, jmax+1):
+                n, m = _noll_to_zern(j)
+                if n%2 == 0:
+                    row, col = n-2, m//2+ncol//2
+                else:
+                    row, col = n-2, (m-1)//2+ncol//2
+                subplotspec = gridspec.new_subplotspec((row, col))
+                axes[j] = fig.add_subplot(subplotspec)
+                axes[j].set_aspect('equal')
+                if nrow%2==0 and n%2==0:
+                    shiftLeft.append(axes[j])
+                if nrow%2==1 and n%2==1:
+                    shiftRight.append(axes[j])
+
+            for j, ax in axes.items():
+                k = "z{}".format(j)
+                ax.set_title(k)
+                ax.scatter(x, y, c=vals[k], s=1, linewidths=0.5, cmap='seismic', rasterized=True,
+                           vmin=-1, vmax=1)
+                ax.set_xticks([])
+                ax.set_yticks([])
+
+            fig.tight_layout()
+            amt = 0.5*(axes[4].get_position().x0 - axes[5].get_position().x0)
+            shiftAxes(shiftLeft, -amt)
+            shiftAxes(shiftRight, amt)
+
+            pdf.savefig(fig, dpi=100)

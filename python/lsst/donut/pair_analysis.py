@@ -172,6 +172,10 @@ class PairAnalysisRunner(pipeBase.TaskRunner):
 
         extraRefList = parsedCmd.extraId.refList
         intraRefList = parsedCmd.intraId.refList
+
+        assert len(extraRefList) == len(intraRefList), \
+            "Ref lists are not the same length!"
+
         return [(ref1, dict(intraRef=ref2))
                 for ref1, ref2 in zip(extraRefList, intraRefList)]
 
@@ -191,9 +195,9 @@ class PairBaseTask(pipeBase.CmdLineTask):
     def _makeArgumentParser(cls, *args, **kwargs):
         # Pop doBatch keyword before passing it along to the argument parser
         kwargs.pop("doBatch", False)
-        parser = pipeBase.ArgumentParser(name="ZernikeParamAnalysis",
+        parser = pipeBase.ArgumentParser(name=cls._DefaultName,
                                          *args, **kwargs)
-        parser.add_argument("--intraRerun", required=True, help="Rerun for extrafocal data")
+        parser.add_argument("--intraRerun", required=True, help="Rerun for intrafocal data")
         parser.add_id_argument("--extraId", datasetType="donutSrc", level="visit",
                                help="extrafocal data ID, e.g. --intraId visit=12345")
         parser.add_id_argument("--intraId", datasetType="donutSrc", level="visit",

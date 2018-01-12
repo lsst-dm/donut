@@ -325,7 +325,7 @@ class ZernikeParamAnalysisTask(PairBaseTask):
                 self.log.info("Plotting {}".format(k))
                 fig, axes = subplots(1, 1, figsize=(8, 6.2))
                 axes = axes.ravel()[0]
-                scatPlot = axes.scatter(x, y, c=v, s=15, linewidths=0.5, cmap='seismic')
+                scatPlot = axes.scatter(x, y, c=v, s=15, linewidths=0.5, cmap='Spectral_r')
                 axes.set_title(k)
                 plotCameraOutline(axes, extraRef.get("camera"))
                 fig.tight_layout()

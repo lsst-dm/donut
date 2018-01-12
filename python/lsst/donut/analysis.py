@@ -204,7 +204,7 @@ class SelectionAnalysisTask(pipeBase.CmdLineTask):
                 if i % 12 == 0:
                     fig, axes = subplots(4, 3, figsize=(8.5, 11))
                 src = icSrc[int(si)]
-                cmap = 'viridis' if src['id'] in donutSrc['id'] else 'inferno'
+                cmap = 'Blues' if src['id'] in donutSrc['id'] else 'Reds'
                 axes.ravel()[i%12].imshow(
                     (cutoutDonut(x[si], y[si], icExp, donutConfig.stampSize)
                      .getImage()
@@ -283,6 +283,8 @@ class GoodnessOfFitAnalysisTask(pipeBase.CmdLineTask):
                        for e in [-1, 1, -1, 1]]
         wfExtent = [0.5*camera.telescopeDiameter*e for e in [-1, 1, -1, 1]]
         kwargs = {'cmap':'viridis', 'interpolation':'nearest', 'extent':donutExtent}
+        residKwargs = dict(kwargs)
+        residKwargs['cmap'] = 'Spectral_r'
         nrow = 5
         ncol = 3
         with PdfPages(outfn) as pdf:
@@ -297,7 +299,7 @@ class GoodnessOfFitAnalysisTask(pipeBase.CmdLineTask):
 
                 axes[i%nrow, 0].imshow(data, **kwargs)
                 axes[i%nrow, 1].imshow(model, **kwargs)
-                axes[i%nrow, 2].imshow(resid, **kwargs)
+                axes[i%nrow, 2].imshow(resid, **residKwargs)
 
                 if i % nrow == nrow-1:
                     fig.tight_layout()

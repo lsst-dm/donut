@@ -33,14 +33,8 @@ def evalZernike(coefficients, coords):
     # Use GalSim internals to evaluate Zernike polynomials.
     aberrations = [0]
     aberrations.extend(coefficients)
-    screen = galsim.OpticalScreen(aberrations=aberrations)
-    rho = coords[:, 0] + 1j * coords[:, 1]
-    # Fake a galsim.Aperture
-    class Aperture():
-        pass
-    aper = Aperture()
-    aper.rho = rho
-    return screen.wavefront(aper, compact=False)
+    screen = galsim.OpticalScreen(aberrations=aberrations, diam=1)
+    return screen.wavefront(coords[:, 0], coords[:, 1])
 
 
 class ZernikeRotMatrixTest(lsst.utils.tests.TestCase):

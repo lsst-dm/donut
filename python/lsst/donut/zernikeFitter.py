@@ -330,7 +330,10 @@ class ZernikeFitter(object):
             v = params
         optPsf = self._getOptPsf(v)
         out = np.zeros_like(aper.u)
-        out[aper.illuminated] = optPsf._psf.screen_list.wavefront(aper)*self.alpha
+        screen = optPsf._screens[0]
+        u = aper.u[aper.illuminated]
+        v =  aper.v[aper.illuminated]
+        out[aper.illuminated] = screen.wavefront(u, v)*self.alpha
         mask = np.logical_not(aper.illuminated)
         return np.ma.masked_array(out, mask)
 

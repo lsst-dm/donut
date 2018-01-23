@@ -53,7 +53,7 @@ def subplots(nrow, ncol, **kwargs):
     return fig, np.array(axes, dtype=object)
 
 
-def plotCameraOutline(axes, camera):
+def plotCameraOutline(axes, camera, doCcd=True):
     axes.tick_params(labelsize=6)
     axes.locator_params(nbins=6)
     axes.ticklabel_format(useOffset=False)
@@ -61,11 +61,12 @@ def plotCameraOutline(axes, camera):
                     camera.getFpBBox().getHeight())/2
     camRadius = np.round(camRadius, -2)
     camLimits = np.round(1.15*camRadius, -2)
-    for ccd in camera:
-        ccdCorners = ccd.getCorners(afwCameraGeom.FOCAL_PLANE)
-        axes.add_patch(patches.Rectangle(
-            ccdCorners[0], *list(ccdCorners[2] - ccdCorners[0]),
-            fill=False, edgecolor="k", ls="solid", lw=0.5))
+    if doCcd:
+        for ccd in camera:
+            ccdCorners = ccd.getCorners(afwCameraGeom.FOCAL_PLANE)
+            axes.add_patch(patches.Rectangle(
+                ccdCorners[0], *list(ccdCorners[2] - ccdCorners[0]),
+                fill=False, edgecolor="k", ls="solid", lw=0.5))
     axes.set_xlim(-camLimits, camLimits)
     axes.set_ylim(-camLimits, camLimits)
     axes.add_patch(patches.Circle(
@@ -359,7 +360,7 @@ class FitParamAnalysisTask(pipeBase.CmdLineTask):
 
         outputdir = filedir(expRef.getButler(),
                             "donutSrc",
-                            dataIdList.values()[0])
+                            list(dataIdList.values())[0])
         plotdir = os.path.abspath(os.path.join(outputdir, "..", "plots"))
         safeMakeDir(plotdir)
         outfn = os.path.join(
@@ -394,7 +395,7 @@ class FitParamAnalysisTask(pipeBase.CmdLineTask):
         return None
 
 
-class StampAnalysisConfig(pexConfig.Config):
+class StampCcdAnalysisConfig(pexConfig.Config):
     psfStampSize = pexConfig.Field(
         dtype = int, default=32,
         doc = "Size of PSF stamp in pixels",
@@ -405,16 +406,16 @@ class StampAnalysisConfig(pexConfig.Config):
     )
 
 
-class StampAnalysisTask(pipeBase.CmdLineTask):
-    ConfigClass = StampAnalysisConfig
-    _DefaultName = "StampAnalysisTask"
+class StampCcdAnalysisTask(pipeBase.CmdLineTask):
+    ConfigClass = StampCcdAnalysisConfig
+    _DefaultName = "StampCcdAnalysisTask"
     RunnerClass = ButlerTaskRunner
 
     def __init__(self, *args, **kwargs):
         pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
 
     def run(self, expRef, butler):
-        """Make a stamp analysis image for a single exposure
+        """Make a stamp analysis image for a single exposure, binned by CCD.
         """
         dataIdList = dict([(ccdRef.get("ccdExposureId"), ccdRef.dataId)
                            for ccdRef in expRef.subItems("ccd")
@@ -428,7 +429,7 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
 
         outputdir = filedir(expRef.getButler(),
                             "donutSrc",
-                            dataIdList.values()[0])
+                            list(dataIdList.values())[0])
         plotdir = os.path.abspath(os.path.join(outputdir, "..", "plots"))
         safeMakeDir(plotdir)
 
@@ -463,9 +464,9 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
             resids[ccd] = resid
 
         # Make plots
-        datafn = "donutStampData-{:07d}.pdf".format(visit)
-        modelfn = "donutStampModel-{:07d}.pdf".format(visit)
-        residfn = "donutStampResid-{:07d}.pdf".format(visit)
+        datafn = "donutStampCcdData-{:07d}.pdf".format(visit)
+        modelfn = "donutStampCcdModel-{:07d}.pdf".format(visit)
+        residfn = "donutStampCcdResid-{:07d}.pdf".format(visit)
         for data, fn in zip((images, models, resids),
                             (datafn, modelfn, residfn)):
             outfn = os.path.join(plotdir, fn)
@@ -503,6 +504,176 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
             right = medlr + 0.5*exttb
         axes.imshow(img, extent=[left, right, bottom, top],
                     aspect='equal', origin='lower', **kwargs)
+
+    @classmethod
+    def _makeArgumentParser(cls, *args, **kwargs):
+        # Pop doBatch keyword before passing it along to the argument parser
+        kwargs.pop("doBatch", False)
+        parser = pipeBase.ArgumentParser(name="StampCcdAnalysis",
+                                         *args, **kwargs)
+        parser.add_id_argument("--id", datasetType="donutSrc", level="visit",
+                               help="data ID, e.g. --id visit=12345")
+        return parser
+
+    def _getConfigName(self):
+        return None
+
+    def _getMetadataName(self):
+        return None
+
+
+class StampAnalysisConfig(pexConfig.Config):
+    psfStampSize = pexConfig.Field(
+        dtype = int, default=32,
+        doc = "Size of PSF stamp in pixels"
+    )
+    psfPixelScale = pexConfig.Field(
+        dtype = float, default=0.025,
+        doc = "Pixel scale of PSF stamp in arcsec"
+    )
+    nStamp = pexConfig.Field(
+        dtype = int, default=10,
+        doc = "Number of stamps across FoV"
+    )
+
+
+class StampAnalysisTask(pipeBase.CmdLineTask):
+    ConfigClass = StampAnalysisConfig
+    _DefaultName = "StampAnalysisTask"
+    RunnerClass = ButlerTaskRunner
+
+    def __init__(self, *args, **kwargs):
+        pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
+
+    def run(self, expRef, butler):
+        """Make a stamp analysis image for a single exposure
+        """
+        dataIdList = dict([(ccdRef.get("ccdExposureId"), ccdRef.dataId)
+                           for ccdRef in expRef.subItems("ccd")
+                           if ccdRef.datasetExists("donutSrc")])
+        dataIdList = collections.OrderedDict(sorted(dataIdList.items()))
+        visit = expRef.dataId['visit']
+        self.log.info("Running on visit {}".format(visit))
+        camera = expRef.get("camera")
+
+        donutConfig = getDonutConfig(expRef)
+
+        outputdir = filedir(expRef.getButler(),
+                            "donutSrc",
+                            list(dataIdList.values())[0])
+        plotdir = os.path.abspath(os.path.join(outputdir, "..", "plots"))
+        safeMakeDir(plotdir)
+
+        # Pass through the data and read everything in
+        images = []
+        models = []
+        resids = []
+        xs = []
+        ys = []
+        s2ns = []
+        for dataId in dataIdList.values():
+            ccd = dataId['ccd']
+            self.log.info("Loading ccd {}".format(ccd))
+            sensorRef = getDataRef(butler, dataId)
+            icExp = sensorRef.get("icExp")
+            donutSrc = sensorRef.get("donutSrc")
+            icSrc = sensorRef.get("icSrc")
+
+            if len(donutSrc) == 0:
+                continue
+            for donut in donutSrc:
+                icRec = icSrc.find(donut.getId())
+                s2ns.append(icRec['base_CircularApertureFlux_25_0_flux'] /
+                            icRec['base_CircularApertureFlux_25_0_fluxSigma'])
+                xs.append(icRec['base_FPPosition_x'])
+                ys.append(icRec['base_FPPosition_y'])
+                data, model = donutDataModel(
+                    donut, icRec, icExp, donutConfig, camera
+                )
+                images.append(data)
+                models.append(model)
+                resids.append(data - model)
+
+        bds = camera.getFpBBox()
+        xbds = np.linspace(bds.getMinX(), bds.getMaxX(), self.config.nStamp+1)
+        ybds = np.linspace(bds.getMinY(), bds.getMaxY(), self.config.nStamp+1)
+
+        # Find brightest donut in each grid cell and keep just that one.
+        s2ns = np.array(s2ns)
+        xs = np.array(xs)
+        ys = np.array(ys)
+        images = np.array(images)
+        models = np.array(models)
+        resids = np.array(resids)
+        imageDict = {}
+        modelDict = {}
+        residDict = {}
+        for ix, (xmin, xmax) in enumerate(zip(xbds[:-1], xbds[1:])):
+            for iy, (ymin, ymax) in enumerate(zip(ybds[:-1], ybds[1:])):
+                w = (xs > xmin) & (xs <= xmax) & (ys > ymin) & (ys <= ymax)
+                if not np.any(w):
+                    continue
+                idx = int(np.argsort(s2ns[w])[-1])
+                imageDict[(ix, iy)] = images[w][idx]
+                modelDict[(ix, iy)] = models[w][idx]
+                residDict[(ix, iy)] = resids[w][idx]
+
+        # Make plots
+        self.makePlot(
+            imageDict,
+            os.path.join(
+                plotdir,
+                "donutStampData-{:07d}.pdf".format(visit)
+            ),
+            xbds,
+            ybds,
+            camera,
+            cmap = 'viridis'
+        )
+
+        self.makePlot(
+            modelDict,
+            os.path.join(
+                plotdir,
+                "donutStampModel-{:07d}.pdf".format(visit)
+            ),
+            xbds,
+            ybds,
+            camera,
+            cmap = 'viridis'
+        )
+
+        self.makePlot(
+            residDict,
+            os.path.join(
+                plotdir,
+                "donutStampResid-{:07d}.pdf".format(visit)
+            ),
+            xbds,
+            ybds,
+            camera,
+            cmap = 'Spectral_r'
+        )
+
+    @staticmethod
+    def makePlot(data, fn, xbds, ybds, camera, **kwargs):
+        with PdfPages(fn) as pdf:
+            fig, axes = subplots(1, 1, figsize=(8, 6.2))
+            axes = axes.ravel()[0]
+            plotCameraOutline(axes, camera, doCcd=False)
+            for ix, (xmin, xmax) in enumerate(zip(xbds[:-1], xbds[1:])):
+                for iy, (ymin, ymax) in enumerate(zip(ybds[:-1], ybds[1:])):
+                    if (ix, iy) not in data:
+                        continue
+                    axes.imshow(
+                        data[(ix, iy)],
+                        extent=[xmin, xmax, ymin, ymax],
+                        aspect='equal',
+                        origin='lower',
+                        **kwargs
+                    )
+            fig.tight_layout()
+            pdf.savefig(fig, dpi=200)
 
     @classmethod
     def _makeArgumentParser(cls, *args, **kwargs):

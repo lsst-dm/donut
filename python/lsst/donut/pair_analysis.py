@@ -66,7 +66,7 @@ def subplots(nrow, ncol, **kwargs):
     return fig, np.array(axes, dtype=object)
 
 
-def plotCameraOutline(axes, camera):
+def plotCameraOutline(axes, camera, doCcd=True):
     axes.tick_params(labelsize=6)
     axes.locator_params(nbins=6)
     axes.ticklabel_format(useOffset=False)
@@ -74,11 +74,12 @@ def plotCameraOutline(axes, camera):
                     camera.getFpBBox().getHeight())/2
     camRadius = np.round(camRadius, -2)
     camLimits = np.round(1.15*camRadius, -2)
-    for ccd in camera:
-        ccdCorners = ccd.getCorners(afwCameraGeom.FOCAL_PLANE)
-        axes.add_patch(patches.Rectangle(
-            ccdCorners[0], *list(ccdCorners[2] - ccdCorners[0]),
-            fill=False, edgecolor="k", ls="solid", lw=0.5))
+    if doCcd:
+        for ccd in camera:
+            ccdCorners = ccd.getCorners(afwCameraGeom.FOCAL_PLANE)
+            axes.add_patch(patches.Rectangle(
+                ccdCorners[0], *list(ccdCorners[2] - ccdCorners[0]),
+                fill=False, edgecolor="k", ls="solid", lw=0.5))
     axes.set_xlim(-camLimits, camLimits)
     axes.set_ylim(-camLimits, camLimits)
     axes.add_patch(patches.Circle(
@@ -333,7 +334,7 @@ class ZernikeParamAnalysisTask(PairBaseTask):
                 pdf.savefig(fig, dpi=100)
 
 
-class PairStampAnalysisConfig(PairBaseConfig):
+class PairStampCcdAnalysisConfig(PairBaseConfig):
     stampSize = pexConfig.Field(
         dtype = int, default = 128,
         doc = "Pixels across PSF image"
@@ -344,15 +345,15 @@ class PairStampAnalysisConfig(PairBaseConfig):
     )
 
 
-class PairStampAnalysisTask(PairBaseTask):
-    ConfigClass = PairStampAnalysisConfig
-    _DefaultName = "PairStampAnalysis"
+class PairStampCcdAnalysisTask(PairBaseTask):
+    ConfigClass = PairStampCcdAnalysisConfig
+    _DefaultName = "PairStampCcdAnalysis"
 
     def __init__(self, *args, **kwargs):
         pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
 
     def run(self, extraRef, intraRef=None):
-        """Process a pair of exposures.
+        """Process a pair of exposures.  Producing output binned by CCD.
         """
         extraVisit = extraRef.dataId['visit']
         camera = extraRef.get("camera")
@@ -411,8 +412,8 @@ class PairStampAnalysisTask(PairBaseTask):
         safeMakeDir(plotdir)
 
         # Make plots
-        psfFn = "donutPairStampPsf-{:07d}.pdf".format(extraVisit)
-        wavefrontFn = "donutPairStampWavefront-{:07d}.pdf".format(extraVisit)
+        psfFn = "donutPairStampCcdPsf-{:07d}.pdf".format(extraVisit)
+        wavefrontFn = "donutPairStampCcdWavefront-{:07d}.pdf".format(extraVisit)
         for data, fn, cmap in zip((psfs, wavefronts),
                                   (psfFn, wavefrontFn),
                                   ('viridis', 'seismic')):
@@ -449,6 +450,174 @@ class PairStampAnalysisTask(PairBaseTask):
             right = medlr + 0.5*exttb
         axes.imshow(img, extent=[left, right, bottom, top],
                     aspect='equal', origin='lower', **kwargs)
+
+    @staticmethod
+    def getPairRecords(catalogs, pair):
+        extraId, intraId, _ = pair
+        return dict(
+            extraIcRecord = catalogs['extraIcSrc'].find(extraId),
+            extraDonutRecord = catalogs['extraDonutSrc'].find(extraId),
+            intraIcRecord = catalogs['intraIcSrc'].find(intraId),
+            intraDonutRecord = catalogs['intraDonutSrc'].find(intraId)
+        )
+
+
+class PairStampAnalysisConfig(PairBaseConfig):
+    stampSize = pexConfig.Field(
+        dtype = int, default = 128,
+        doc = "Pixels across PSF image"
+    )
+    pixelScale = pexConfig.Field(
+        dtype = float, default=0.005,
+        doc = "Pixel scale for PSF image"
+    )
+    nStamp = pexConfig.Field(
+        dtype = int, default=10,
+        doc = "Number of stamps across FoV"
+    )
+
+
+class PairStampAnalysisTask(PairBaseTask):
+    ConfigClass = PairStampAnalysisConfig
+    _DefaultName = "PairStampAnalysis"
+
+    def __init__(self, *args, **kwargs):
+        pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
+
+    def run(self, extraRef, intraRef=None):
+        """Process a pair of exposures.
+        """
+        extraVisit = extraRef.dataId['visit']
+        camera = extraRef.get("camera")
+        self.log.info("Working on extra/intra visits: {}/{}".format(
+            extraRef.dataId['visit'], intraRef.dataId['visit']))
+
+        extraIdList, intraIdList = self.getIdLists(extraRef, intraRef)
+
+        donutConfig = getDonutConfig(extraRef)
+
+        # Pass through data and read in donut src catalogs
+        s2ns = []
+        allPairs = []
+        ccds = []
+        for ccd, eCcdRef in extraIdList.items():
+            try:
+                iCcdRef = intraIdList[ccd]
+            except KeyError:
+                continue
+            self.log.info("Working on ccd {}".format(ccd))
+            catalogs = self.getCatalogs(eCcdRef, iCcdRef)
+            pairs = self.getPairs(catalogs)
+            allPairs.extend(pairs)
+            for pair in pairs:
+                extraId, intraId, donutCoord = pair
+                extraRecord = catalogs['extraIcSrc'].find(extraId)
+                intraRecord = catalogs['intraIcSrc'].find(intraId)
+                s2ns.append(
+                    0.5*(
+                        (extraRecord['base_CircularApertureFlux_25_0_flux'] /
+                         extraRecord['base_CircularApertureFlux_25_0_fluxSigma']) +
+                        (intraRecord['base_CircularApertureFlux_25_0_flux'] /
+                         intraRecord['base_CircularApertureFlux_25_0_fluxSigma'])
+                    )
+                )
+                ccds.append(ccd)
+        s2ns = np.array(s2ns)
+        ccds = np.array(ccds)
+
+        # Determine grid cells
+        bds = camera.getFpBBox()
+        xbds = np.linspace(bds.getMinX(), bds.getMaxX(), self.config.nStamp+1)
+        ybds = np.linspace(bds.getMinY(), bds.getMaxY(), self.config.nStamp+1)
+
+        # Find brightest donut in each grid cell and load it.
+        psfDict = {}
+        wfDict = {}
+        xs = np.array([p[2][0] for p in allPairs])
+        ys = np.array([p[2][1] for p in allPairs])
+        for ix, (xmin, xmax) in enumerate(zip(xbds[:-1], xbds[1:])):
+            for iy, (ymin, ymax) in enumerate(zip(ybds[:-1], ybds[1:])):
+                w = (xs > xmin) & (xs <= xmax) & (ys > ymin) & (ys <= ymax)
+                if not np.any(w):
+                    continue
+                widx = int(np.argsort(s2ns[w])[-1])
+                idx = w.nonzero()[0][widx]
+                ccd = ccds[idx]
+                pair = allPairs[idx]
+                eCcdRef = extraIdList[ccd]
+                iCcdRef = intraIdList[ccd]
+                catalogs = self.getCatalogs(eCcdRef, iCcdRef)
+                records = self.getPairRecords(catalogs, pair)
+                extraIcExp = eCcdRef.get("icExp")
+                psf, wf = donutPsfWf(records, extraIcExp, donutConfig,
+                                     self.config, camera)
+                psfDict[(ix, iy)] = psf
+                wfDict[(ix, iy)] = wf
+
+        extraButler = extraRef.getButler()
+        outputdir = os.path.dirname(
+            os.path.join(
+                extraButler.get(
+                    "donutSrc_filename",
+                    visit=extraVisit,
+                    ccd=0
+                )[0]
+            )
+        )
+        plotdir = os.path.abspath(os.path.join(outputdir, "..", "plots"))
+        safeMakeDir(plotdir)
+
+        self.makePlot(
+            psfDict,
+            os.path.join(
+                plotdir,
+                "donutPairStampPsf-{:07d}.pdf".format(extraVisit)
+            ),
+            xbds,
+            ybds,
+            camera,
+            cmap = 'viridis'
+        )
+
+        # For wavefronts, it makes sense to use a consistent colorbar
+        vmin, vmax = np.percentile(np.array(list(wfDict.values())),
+                                   [0.5, 99.5])
+        vabs = max(abs(vmin), abs(vmax))
+        vmin, vmax = -vabs, vabs
+
+        self.makePlot(
+            wfDict,
+            os.path.join(
+                plotdir,
+                "donutPairStampWavefront-{:07d}.pdf".format(extraVisit)
+            ),
+            xbds,
+            ybds,
+            camera,
+            cmap = 'Spectral_r',
+            vmin = vmin,
+            vmax = vmax
+        )
+
+    @staticmethod
+    def makePlot(data, fn, xbds, ybds, camera, **kwargs):
+        with PdfPages(fn) as pdf:
+            fig, axes = subplots(1, 1, figsize=(8, 6.2))
+            axes = axes.ravel()[0]
+            plotCameraOutline(axes, camera, doCcd=False)
+            for ix, (xmin, xmax) in enumerate(zip(xbds[:-1], xbds[1:])):
+                for iy, (ymin, ymax) in enumerate(zip(ybds[:-1], ybds[1:])):
+                    if (ix, iy) not in data:
+                        continue
+                    axes.imshow(
+                        data[(ix, iy)],
+                        extent=[xmin, xmax, ymin, ymax],
+                        aspect='equal',
+                        origin='lower',
+                        **kwargs
+                    )
+            fig.tight_layout()
+            pdf.savefig(fig, dpi=200)
 
     @staticmethod
     def getPairRecords(catalogs, pair):

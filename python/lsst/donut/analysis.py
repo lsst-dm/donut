@@ -26,134 +26,25 @@ from future.utils import iteritems
 import os
 import collections
 import numpy as np
-import galsim
-from matplotlib.backends.backend_pdf import PdfPages, FigureCanvasPdf
-from matplotlib.figure import Figure
-import matplotlib.patches as patches
+
+from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.pyplot import subplots
 
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
 import lsst.afw.geom as afwGeom
-from lsst.afw.geom import arcseconds
 import lsst.afw.math as afwMath
 import lsst.afw.cameraGeom as afwCameraGeom
 from lsst.daf.persistence.safeFileIo import safeMakeDir
 from lsst.daf.persistence import NoResults
 from lsst.pipe.drivers.utils import getDataRef, ButlerTaskRunner
 from .zernikeFitter import ZernikeFitter
-from .utilities import cutoutDonut, markGoodDonuts, _getGoodPupilShape
+from .utilities import first
+from .utilities import getCutout, _getGoodPupilShape
 from .utilities import _getJacobian, getDonutConfig
+from .utilities import getDonut, getModel
 
-
-def subplots(nrow, ncol, **kwargs):
-    fig = Figure(**kwargs)
-    axes = [[fig.add_subplot(nrow, ncol, i+ncol*j+1)
-             for i in range(ncol)]
-            for j in range(nrow)]
-    return fig, np.array(axes, dtype=object)
-
-
-def plotCameraOutline(axes, camera, doCcd=True):
-    axes.tick_params(labelsize=6)
-    axes.locator_params(nbins=6)
-    axes.ticklabel_format(useOffset=False)
-    camRadius = max(camera.getFpBBox().getWidth(),
-                    camera.getFpBBox().getHeight())/2
-    camRadius = np.round(camRadius, -2)
-    camLimits = np.round(1.15*camRadius, -2)
-    if doCcd:
-        for ccd in camera:
-            ccdCorners = ccd.getCorners(afwCameraGeom.FOCAL_PLANE)
-            axes.add_patch(patches.Rectangle(
-                ccdCorners[0], *list(ccdCorners[2] - ccdCorners[0]),
-                fill=False, edgecolor="k", ls="solid", lw=0.5))
-    axes.set_xlim(-camLimits, camLimits)
-    axes.set_ylim(-camLimits, camLimits)
-    axes.add_patch(patches.Circle(
-        (0, 0), radius=camRadius, color="black", alpha=0.1))
-
-
-def filedir(butler, dataset, dataId):
-    return os.path.dirname(butler.get(dataset+"_filename", dataId)[0])
-
-
-def donutDataModel(donutRecord, icRecord, icExp, donutConfig, camera):
-    """Return numpy arrays of donut cutout, corresponding model, and wavefront.
-    """
-    pixelScale = icExp.getWcs().pixelScale()
-
-    wavelength = donutConfig.wavelength
-    if wavelength is None:
-        wavelength = icExp.getFilter().getFilterProperty().getLambdaEff()
-    jmax = donutConfig.jmaxs[-1]
-
-    nquarter = icExp.getDetector().getOrientation().getNQuarter()
-    if donutConfig.flip:
-        nquarter += 2
-    visitInfo = icExp.getInfo().getVisitInfo()
-
-    pupilSize, pupilNPix = _getGoodPupilShape(
-        camera.telescopeDiameter, wavelength, donutConfig.stampSize*pixelScale)
-    pupilFactory = camera.getPupilFactory(visitInfo, pupilSize, pupilNPix)
-
-    fpX = icRecord['base_FPPosition_x']
-    fpY = icRecord['base_FPPosition_y']
-    pupil = pupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
-
-    detector = icExp.getDetector()
-    point = afwGeom.Point2D(icRecord.getX(), icRecord.getY())
-    if donutConfig.doJacobian:
-        jacobian = _getJacobian(detector, point)
-        # Need to apply quarter rotations to jacobian
-        th = np.pi/2*nquarter
-        sth, cth = np.sin(th), np.cos(th)
-        rot = np.array([[cth, sth], [-sth, cth]])
-        jacobian = np.dot(rot.T, np.dot(jacobian, rot))
-    else:
-        jacobian = np.eye(2)
-
-    params = {}
-    keys = ['r0', 'dx', 'dy', 'flux']
-    for j in range(4, jmax + 1):
-        keys.append('z{}'.format(j))
-    for k in keys:
-        params[k] = donutRecord['zfit_jmax{}_{}'.format(jmax, k)]
-    zfitter = ZernikeFitter(
-        jmax,
-        wavelength,
-        pupil,
-        camera.telescopeDiameter
-    )
-
-    maskedImage = cutoutDonut(icRecord.getX(), icRecord.getY(), icExp,
-                              donutConfig.stampSize)
-    maskedImage = afwMath.rotateImageBy90(maskedImage, nquarter)
-    data = maskedImage.getImage().getArray()
-    model = zfitter.constructModelImage(
-        params = params,
-        pixelScale = pixelScale.asArcseconds(),
-        jacobian = jacobian,
-        shape = (donutConfig.stampSize, donutConfig.stampSize))
-
-    return data, model
-
-
-def moments(image, scale=1.0):
-    x, y = np.meshgrid(np.arange(image.shape[0])*scale,
-                       np.arange(image.shape[1])*scale)
-    I0 = image.sum()
-    Ix = (image*x).sum()/I0
-    Iy = (image*y).sum()/I0
-    Ixx = (image*(x-Ix)*(x-Ix)).sum()/I0
-    Ixy = (image*(x-Ix)*(y-Iy)).sum()/I0
-    Iyy = (image*(y-Iy)*(y-Iy)).sum()/I0
-    rsqr = Ixx + Iyy
-    e1 = (Ixx - Iyy)/rsqr
-    e2 = 2*Ixy/rsqr
-    r = np.sqrt(rsqr)
-    e = np.hypot(e1, e2)
-    return dict(I0=I0, Ix=Ix, Iy=Iy, Ixx=Ixx, Ixy=Ixy, Iyy=Iyy,
-                e1=e1, e2=e2, rsqr=rsqr, r=r, e=e)
+from .plotUtils import getPlotDir, plotCameraOutline
 
 
 class SelectionAnalysisConfig(pexConfig.Config):
@@ -189,11 +80,9 @@ class SelectionAnalysisTask(pipeBase.CmdLineTask):
         s2n = (icSrc['base_CircularApertureFlux_25_0_flux'] /
                icSrc['base_CircularApertureFlux_25_0_fluxSigma'])
 
-        outputdir = filedir(sensorRef.getButler(), "icSrc", dataId)
-        plotdir = os.path.abspath(os.path.join(outputdir, "..", "plots"))
-        safeMakeDir(plotdir)
+        plotDir = getPlotDir(sensorRef.getButler(), "icSrc", dataId)
         outfn = os.path.join(
-            plotdir, "donutSelection-{:07d}-{:03d}.pdf".format(visit, ccd))
+            plotDir, "donutSelection-{:07d}-{:03d}.pdf".format(visit, ccd))
 
         pixelScale = icExp.getWcs().pixelScale()
         extent = [0.5*donutConfig.stampSize*pixelScale.asArcseconds()*e
@@ -207,9 +96,10 @@ class SelectionAnalysisTask(pipeBase.CmdLineTask):
                 src = icSrc[int(si)]
                 cmap = 'Blues' if src['id'] in donutSrc['id'] else 'Reds'
                 axes.ravel()[i%12].imshow(
-                    (cutoutDonut(x[si], y[si], icExp, donutConfig.stampSize)
-                     .getImage()
-                     .getArray()),
+                    # (getCutout(x[si], y[si], icExp, donutConfig.stampSize)
+                    #  .getImage()
+                    #  .getArray()),
+                    getDonut(src, icExp, donutConfig),
                     cmap=cmap,
                     interpolation='nearest',
                     extent=extent)
@@ -273,12 +163,9 @@ class GoodnessOfFitAnalysisTask(pipeBase.CmdLineTask):
         icExp = sensorRef.get('icExp')
         camera = sensorRef.get('camera')
 
-        outputdir = filedir(sensorRef.getButler(), "donutSrc", dataId)
-        plotdir = os.path.abspath(os.path.join(outputdir, "..", "plots"))
-        print(plotdir)
-        safeMakeDir(plotdir)
+        plotDir = getPlotDir(sensorRef.getButler(), "donutSrc", dataId)
         outfn = os.path.join(
-            plotdir, "donutGoodnessOfFit-{:07d}-{:03d}.pdf".format(visit, ccd))
+            plotDir, "donutGoodnessOfFit-{:07d}-{:03d}.pdf".format(visit, ccd))
         pixelScale = icExp.getWcs().pixelScale()
         donutExtent = [0.5*donutConfig.stampSize*pixelScale.asArcseconds()*e
                        for e in [-1, 1, -1, 1]]
@@ -294,8 +181,8 @@ class GoodnessOfFitAnalysisTask(pipeBase.CmdLineTask):
                 icRecord = icSrc.find(donutRecord.getId())
                 if i % nrow == 0:
                     fig, axes = subplots(nrow, ncol, figsize=(8.5, 11))
-                data, model = donutDataModel(
-                    donutRecord, icRecord, icExp, donutConfig, camera)
+                data = getDonut(icRecord, icExp, donutConfig)
+                model = getModel(donutRecord, icRecord, icExp, donutConfig, camera)
                 resid = data - model
 
                 axes[i%nrow, 0].imshow(data, **kwargs)
@@ -358,20 +245,24 @@ class FitParamAnalysisTask(pipeBase.CmdLineTask):
             for k, v in iteritems(vals):
                 v.extend(donut['zfit_jmax{}_{}'.format(jmax, k)] for donut in donutSrc)
 
-        outputdir = filedir(expRef.getButler(),
-                            "donutSrc",
-                            list(dataIdList.values())[0])
-        plotdir = os.path.abspath(os.path.join(outputdir, "..", "plots"))
-        safeMakeDir(plotdir)
+        plotDir = getPlotDir(sensorRef.getButler(), "donutSrc", first(dataIdList.values()))
         outfn = os.path.join(
-            plotdir,
+            plotDir,
             "donutFitParam-{:07d}.pdf".format(visit))
         with PdfPages(outfn) as pdf:
             for k, v in iteritems(vals):
                 self.log.info("Plotting {}".format(k))
+                if k.startswith('z') and k != 'z4':
+                    cmap = 'Spectral_r'
+                    vmin = -max(np.abs(v))
+                    vmax = max(np.abs(v))
+                else:
+                    cmap = 'viridis'
+                    vmin = min(v)
+                    vmax = max(v)
                 fig, axes = subplots(1, 1, figsize=(8, 6.2))
-                axes = axes.ravel()[0]
-                scatPlot = axes.scatter(x, y, c=v, s=15, linewidths=0.5)
+                scatPlot = axes.scatter(x, y, c=v, s=15, linewidths=0.5,
+                                        cmap=cmap, vmin=vmin, vmax=vmax)
                 axes.set_title(k)
                 plotCameraOutline(axes, expRef.get("camera"))
                 fig.tight_layout()
@@ -427,11 +318,9 @@ class StampCcdAnalysisTask(pipeBase.CmdLineTask):
 
         donutConfig = getDonutConfig(expRef)
 
-        outputdir = filedir(expRef.getButler(),
+        plotDir = getPlotDir(expRef.getButler(),
                             "donutSrc",
-                            list(dataIdList.values())[0])
-        plotdir = os.path.abspath(os.path.join(outputdir, "..", "plots"))
-        safeMakeDir(plotdir)
+                            first(dataIdList.values()))
 
         # Collect images
         images = {}
@@ -456,33 +345,60 @@ class StampCcdAnalysisTask(pipeBase.CmdLineTask):
             idx = int(np.argsort(s2n)[-1])
             donutRecord = donutSrc[idx]
             icRecord = icSrc.find(donutRecord.getId())
-            data, model = donutDataModel(
-                donutRecord, icRecord, icExp, donutConfig, camera)
+            data = getDonut(icRecord, icExp, donutConfig)
+            model = getModel(donutRecord, icRecord, icExp, donutConfig, camera)
             resid = data - model
             images[ccd] = data
             models[ccd] = model
             resids[ccd] = resid
 
         # Make plots
-        datafn = "donutStampCcdData-{:07d}.pdf".format(visit)
-        modelfn = "donutStampCcdModel-{:07d}.pdf".format(visit)
-        residfn = "donutStampCcdResid-{:07d}.pdf".format(visit)
-        for data, fn in zip((images, models, resids),
-                            (datafn, modelfn, residfn)):
-            outfn = os.path.join(plotdir, fn)
-            with PdfPages(outfn) as pdf:
-                fig, axes = subplots(1, 1, figsize=(8, 6.2))
-                axes = axes.ravel()[0]
-                plotCameraOutline(axes, camera)
-                for dataId in dataIdList.values():
-                    ccd = dataId['ccd']
-                    try:
-                        self.imshow(data[ccd], camera[ccd], axes,
-                                    cmap='viridis')
-                    except KeyError:
-                        pass
-                fig.tight_layout()
-                pdf.savefig(fig, dpi=200)
+        self.makePlot(
+            images,
+            os.path.join(
+                plotDir,
+                "donutStampCcdData-{:07d}.pdf".format(visit),
+            ),
+            camera,
+            dataIdList,
+            cmap = 'viridis'
+        )
+
+        self.makePlot(
+            models,
+            os.path.join(
+                plotDir,
+                "donutStampCcdModel-{:07d}.pdf".format(visit),
+            ),
+            camera,
+            dataIdList,
+            cmap = 'viridis'
+        )
+
+        self.makePlot(
+            resids,
+            os.path.join(
+                plotDir,
+                "donutStampCcdResid-{:07d}.pdf".format(visit),
+            ),
+            camera,
+            dataIdList,
+            cmap = 'Spectral_r'
+        )
+
+    @classmethod
+    def makePlot(cls, data, fn, camera, dataIdList, **kwargs):
+        with PdfPages(fn) as pdf:
+            fig, axes = subplots(1, 1, figsize=(8, 6.2))
+            plotCameraOutline(axes, camera)
+            for dataId in dataIdList.values():
+                ccd = dataId['ccd']
+                try:
+                    cls.imshow(data[ccd], camera[ccd], axes, **kwargs)
+                except KeyError:
+                    pass
+            fig.tight_layout()
+            pdf.savefig(fig, dpi=200)
 
     @staticmethod
     def imshow(img, det, axes, **kwargs):
@@ -558,53 +474,41 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
 
         donutConfig = getDonutConfig(expRef)
 
-        outputdir = filedir(expRef.getButler(),
+        plotDir = getPlotDir(expRef.getButler(),
                             "donutSrc",
-                            list(dataIdList.values())[0])
-        plotdir = os.path.abspath(os.path.join(outputdir, "..", "plots"))
-        safeMakeDir(plotdir)
+                            first(dataIdList.values()))
 
-        # Pass through the data and read everything in
-        images = []
-        models = []
-        resids = []
         xs = []
         ys = []
         s2ns = []
+        sensorRefs = []
+        ids = []
         for dataId in dataIdList.values():
             ccd = dataId['ccd']
             self.log.info("Loading ccd {}".format(ccd))
             sensorRef = getDataRef(butler, dataId)
-            icExp = sensorRef.get("icExp")
             donutSrc = sensorRef.get("donutSrc")
             icSrc = sensorRef.get("icSrc")
-
             if len(donutSrc) == 0:
                 continue
             for donut in donutSrc:
-                icRec = icSrc.find(donut.getId())
+                donutId = donut.getId()
+                icRec = icSrc.find(donutId)
                 s2ns.append(icRec['base_CircularApertureFlux_25_0_flux'] /
                             icRec['base_CircularApertureFlux_25_0_fluxSigma'])
                 xs.append(icRec['base_FPPosition_x'])
                 ys.append(icRec['base_FPPosition_y'])
-                data, model = donutDataModel(
-                    donut, icRec, icExp, donutConfig, camera
-                )
-                images.append(data)
-                models.append(model)
-                resids.append(data - model)
+                sensorRefs.append(sensorRef)
+                ids.append(donutId)
 
         bds = camera.getFpBBox()
         xbds = np.linspace(bds.getMinX(), bds.getMaxX(), self.config.nStamp+1)
         ybds = np.linspace(bds.getMinY(), bds.getMaxY(), self.config.nStamp+1)
 
-        # Find brightest donut in each grid cell and keep just that one.
+        # Find brightest donut in each grid cell and retrieve that one.
         s2ns = np.array(s2ns)
         xs = np.array(xs)
         ys = np.array(ys)
-        images = np.array(images)
-        models = np.array(models)
-        resids = np.array(resids)
         imageDict = {}
         modelDict = {}
         residDict = {}
@@ -613,16 +517,27 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
                 w = (xs > xmin) & (xs <= xmax) & (ys > ymin) & (ys <= ymax)
                 if not np.any(w):
                     continue
-                idx = int(np.argsort(s2ns[w])[-1])
-                imageDict[(ix, iy)] = images[w][idx]
-                modelDict[(ix, iy)] = models[w][idx]
-                residDict[(ix, iy)] = resids[w][idx]
+                widx = int(np.argsort(s2ns[w])[-1])
+                idx = w.nonzero()[0][widx]
+                sensorRef = sensorRefs[idx]
+                donutId = ids[idx]
+                icExp = sensorRef.get("icExp")
+                icSrc = sensorRef.get("icSrc")
+                donutSrc = sensorRef.get("donutSrc")
+                icRec = icSrc.find(donutId)
+                donut = donutSrc.find(donutId)
+
+                data = getDonut(icRec, icExp, donutConfig)
+                model = getModel(donut, icRec, icExp, donutConfig, camera)
+                imageDict[(ix, iy)] = data
+                modelDict[(ix, iy)] = model
+                residDict[(ix, iy)] = data - model
 
         # Make plots
         self.makePlot(
             imageDict,
             os.path.join(
-                plotdir,
+                plotDir,
                 "donutStampData-{:07d}.pdf".format(visit)
             ),
             xbds,
@@ -634,7 +549,7 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
         self.makePlot(
             modelDict,
             os.path.join(
-                plotdir,
+                plotDir,
                 "donutStampModel-{:07d}.pdf".format(visit)
             ),
             xbds,
@@ -646,7 +561,7 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
         self.makePlot(
             residDict,
             os.path.join(
-                plotdir,
+                plotDir,
                 "donutStampResid-{:07d}.pdf".format(visit)
             ),
             xbds,
@@ -659,7 +574,6 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
     def makePlot(data, fn, xbds, ybds, camera, **kwargs):
         with PdfPages(fn) as pdf:
             fig, axes = subplots(1, 1, figsize=(8, 6.2))
-            axes = axes.ravel()[0]
             plotCameraOutline(axes, camera, doCcd=False)
             for ix, (xmin, xmax) in enumerate(zip(xbds[:-1], xbds[1:])):
                 for iy, (ymin, ymax) in enumerate(zip(ybds[:-1], ybds[1:])):

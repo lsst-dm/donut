@@ -26,127 +26,126 @@ import lmfit
 import galsim
 import numpy as np
 
-from .utilities import _getGoodPupilShape
 
-class ZernikeModeler(object):
-    def __init__(self, camera, visitInfo, maxStampSize, point):
-        """
-        Note maxStampSize is an afwGeom.Angle type
-        """
-        self.camera = camera
-        self.visitInfo = visitInfo
-        self.maxStampSize = maxStampSize
-        self.point = point
-
-        # Set some defaults
-        self.alpha = 1.0
-        self.oversampling = 1.0
-        self.padFactor = 1.0
-        self.centerPupil = True
-        self.r0 = np.inf
-        self.dx = 0.0
-        self.dy = 0.0
-        self.flux = 1.0
-        self.aberrations = np.array([0,0,0,0])
-        self.jacobian = np.eye(2, dtype=float)
-        self.wavelength = 775.0
-        self.pixelScale = 0.168
-        self.stampSize = 57
-
-        self.psfNeedsUpdate = True
-
-    def updatePupil(self, **kwargs):
-        # Update pupil and aper, and any kwargs affecting these, but only if necessary.
-        alpha = kwargs.pop('alpha', self.alpha)
-        wavelength = kwargs.pop('wavelength', self.wavelength)
-        oversampling = kwargs.pop('oversampling', self.oversampling)
-        padFactor = kwargs.pop('padFactor', self.padFactor)
-        centerPupil = kwargs.pop('centerPupil', self.centerPupil)
-        if ((alpha != self.alpha
-             or wavelength != self.wavelength
-             or oversampling != self.oversampling
-             or padFactor != self.padFactor
-             or centerPupil != self.centerPupil
-             or not hasattr(self, 'pupil'))):
-            pupilSize, npix = _getGoodPupilShape(
-                self.camera.telescopeDiameter,
-                wavelength*alpha,
-                self.maxStampSize,
-                oversampling = oversampling,
-                padFactor = padFactor
-            )
-            self.alpha = alpha
-            self.wavelength = wavelength
-            self.oversampling = oversampling
-            self.padFactor = padFactor
-            self.centerPupil = centerPupil
-
-            pupilFactory = self.camera.getPupilFactory(
-                self.visitInfo,
-                pupilSize,
-                npix,
-                doCenter = centerPupil
-            )
-            self.pupil = pupilFactory.getPupil(self.point)
-            self.aper = galsim.Aperture(
-                diam = self.camera.telescopeDiameter,
-                pupil_plane_im = self.pupil.illuminated.astype(np.int16),
-                pupil_plane_scale = self.pupil.scale,
-                pupil_plane_size = self.pupil.size)
-            self.psfNeedsUpdate = True
-
-    def updatePsf(self, **kwargs):
-        r0 = kwargs.pop('r0', self.r0)
-        dx = kwargs.pop('dx', self.dx)
-        dy = kwargs.pop('dy', self.dy)
-        flux = kwargs.pop('flux', self.flux)
-        aberrations = np.array(kwargs.pop('aberrations', self.aberrations))
-        wavelength = kwargs.pop('wavelength', self.wavelength)
-        if ((r0 != self.r0
-             or dx != self.dx
-             or dy != self.dy
-             or flux != self.flux
-             or np.any(aberrations != self.aberrations)
-             or self.psfNeedsUpdate)):
-            self.r0 = r0
-            self.dx = dx
-            self.dy = dy
-            self.flux = flux
-            self.aberrations = aberrations
-            self.wavelength = wavelength
-            self.psf = galsim.OpticalPSF(
-                lam = self.wavelength*self.alpha,
-                diam = self.aper.diam,
-                aper = self.aper,
-                aberrations = [a/self.alpha for a in aberrations]
-            )
-            if r0 != np.inf:
-                atmPsf = galsim.Kolmogorov(lam=self.wavelength, r0=r0)
-                self.psf = galsim.Convolve(self.psf, atmPsf)
-            self.psf = self.psf.shift(dx, dy)*flux
-            self.psfNeedsUpdate = False
-
-    def updateDrawParams(self, **kwargs):
-        self.jacobian = kwargs.pop('jacobian', self.jacobian)
-        self.pixelScale = kwargs.pop('pixelScale', self.pixelScale)
-        self.stampSize = kwargs.pop('stampSize', self.stampSize)
-
-    def getGSObject(self, **kwargs):
-        self.updatePupil(**kwargs)
-        self.updatePsf(**kwargs)
-        return self.psf
-
-    def getModel(self, **kwargs):
-        self.updatePupil(**kwargs)
-        self.updatePsf(**kwargs)
-        self.updateDrawParams(**kwargs)
-
-        wcs = galsim.JacobianWCS(*list(self.pixelScale*self.jacobian.ravel()))
-        modelImg = self.psf.drawImage(
-            nx = self.stampSize,
-            ny = self.stampSize,
-            wcs = wcs)
-        return modelImg.array
+# class ZernikeModeler(object):
+#     def __init__(self, camera, visitInfo, maxStampSize, point):
+#         """
+#         Note maxStampSize is an afwGeom.Angle type
+#         """
+#         self.camera = camera
+#         self.visitInfo = visitInfo
+#         self.maxStampSize = maxStampSize
+#         self.point = point
+#
+#         # Set some defaults
+#         self.alpha = 1.0
+#         self.oversampling = 1.0
+#         self.padFactor = 1.0
+#         self.centerPupil = True
+#         self.r0 = np.inf
+#         self.dx = 0.0
+#         self.dy = 0.0
+#         self.flux = 1.0
+#         self.aberrations = np.array([0,0,0,0])
+#         self.jacobian = np.eye(2, dtype=float)
+#         self.wavelength = 775.0
+#         self.pixelScale = 0.168
+#         self.stampSize = 57
+#
+#         self.psfNeedsUpdate = True
+#
+#     def updatePupil(self, **kwargs):
+#         # Update pupil and aper, and any kwargs affecting these, but only if necessary.
+#         alpha = kwargs.pop('alpha', self.alpha)
+#         wavelength = kwargs.pop('wavelength', self.wavelength)
+#         oversampling = kwargs.pop('oversampling', self.oversampling)
+#         padFactor = kwargs.pop('padFactor', self.padFactor)
+#         centerPupil = kwargs.pop('centerPupil', self.centerPupil)
+#         if ((alpha != self.alpha
+#              or wavelength != self.wavelength
+#              or oversampling != self.oversampling
+#              or padFactor != self.padFactor
+#              or centerPupil != self.centerPupil
+#              or not hasattr(self, 'pupil'))):
+#             pupilSize, npix = _getGoodPupilShape(
+#                 self.camera.telescopeDiameter,
+#                 wavelength*alpha,
+#                 self.maxStampSize,
+#                 oversampling = oversampling,
+#                 padFactor = padFactor
+#             )
+#             self.alpha = alpha
+#             self.wavelength = wavelength
+#             self.oversampling = oversampling
+#             self.padFactor = padFactor
+#             self.centerPupil = centerPupil
+#
+#             pupilFactory = self.camera.getPupilFactory(
+#                 self.visitInfo,
+#                 pupilSize,
+#                 npix,
+#                 doCenter = centerPupil
+#             )
+#             self.pupil = pupilFactory.getPupil(self.point)
+#             self.aper = galsim.Aperture(
+#                 diam = self.camera.telescopeDiameter,
+#                 pupil_plane_im = self.pupil.illuminated.astype(np.int16),
+#                 pupil_plane_scale = self.pupil.scale,
+#                 pupil_plane_size = self.pupil.size)
+#             self.psfNeedsUpdate = True
+#
+#     def updatePsf(self, **kwargs):
+#         r0 = kwargs.pop('r0', self.r0)
+#         dx = kwargs.pop('dx', self.dx)
+#         dy = kwargs.pop('dy', self.dy)
+#         flux = kwargs.pop('flux', self.flux)
+#         aberrations = np.array(kwargs.pop('aberrations', self.aberrations))
+#         wavelength = kwargs.pop('wavelength', self.wavelength)
+#         if ((r0 != self.r0
+#              or dx != self.dx
+#              or dy != self.dy
+#              or flux != self.flux
+#              or np.any(aberrations != self.aberrations)
+#              or self.psfNeedsUpdate)):
+#             self.r0 = r0
+#             self.dx = dx
+#             self.dy = dy
+#             self.flux = flux
+#             self.aberrations = aberrations
+#             self.wavelength = wavelength
+#             self.psf = galsim.OpticalPSF(
+#                 lam = self.wavelength*self.alpha,
+#                 diam = self.aper.diam,
+#                 aper = self.aper,
+#                 aberrations = [a/self.alpha for a in aberrations]
+#             )
+#             if r0 != np.inf:
+#                 atmPsf = galsim.Kolmogorov(lam=self.wavelength, r0=r0)
+#                 self.psf = galsim.Convolve(self.psf, atmPsf)
+#             self.psf = self.psf.shift(dx, dy)*flux
+#             self.psfNeedsUpdate = False
+#
+#     def updateDrawParams(self, **kwargs):
+#         self.jacobian = kwargs.pop('jacobian', self.jacobian)
+#         self.pixelScale = kwargs.pop('pixelScale', self.pixelScale)
+#         self.stampSize = kwargs.pop('stampSize', self.stampSize)
+#
+#     def getGSObject(self, **kwargs):
+#         self.updatePupil(**kwargs)
+#         self.updatePsf(**kwargs)
+#         return self.psf
+#
+#     def getModel(self, **kwargs):
+#         self.updatePupil(**kwargs)
+#         self.updatePsf(**kwargs)
+#         self.updateDrawParams(**kwargs)
+#
+#         wcs = galsim.JacobianWCS(*list(self.pixelScale*self.jacobian.ravel()))
+#         modelImg = self.psf.drawImage(
+#             nx = self.stampSize,
+#             ny = self.stampSize,
+#             wcs = wcs)
+#         return modelImg.array
 
 
 class ZernikeFitter(object):

@@ -22,13 +22,52 @@
 #
 from __future__ import absolute_import, division, print_function
 
+import os
+
 import numpy as np
+import galsim
 
 import lsst.afw.image as afwImage
 import lsst.afw.geom as afwGeom
-import lsst.afw.cameraGeom as cameraGeom
+import lsst.afw.cameraGeom as afwCameraGeom
 import lsst.afw.table as afwTable
+import lsst.afw.math as afwMath
 from lsst.daf.persistence import NoResults
+
+from .zernikeFitter import ZernikeFitter
+
+# https://stackoverflow.com/questions/21062781/
+# "Shortest way to get first item of OrderedDict in Python 3"
+def first(collection):
+    return next(iter(collection))
+
+
+def lodToDol(lod):
+    """Convert a list of dicts into a dict of lists.
+    """
+    d = lod[0]
+    keys = list(d.keys())
+    out = {}
+    for k in keys:
+        out[k] = []
+    for d in lod:
+        for k in keys:
+            out[k].append(d[k])
+    return out
+
+
+def getMoments(arr, pixelScale):
+    try:
+        mom = galsim.hsm.FindAdaptiveMom(galsim.Image(arr))
+    except:
+        nan = float('nan')
+        return {'e1':nan, 'e2':nan, 'rsqr':nan, 'Mxx':nan, 'Myy':nan, 'Mxy':nan}
+    e1, e2 = mom.observed_shape.e1, mom.observed_shape.e2
+    rsqr = 2*mom.moments_sigma**2*pixelScale**2
+    Mxy = 0.5*rsqr*e2
+    Mxx = 0.5*rsqr*(1.+e1)
+    Myy = 0.5*rsqr*(1.-e1)
+    return {'e1':e1, 'e2':e2, 'rsqr':rsqr, 'Mxx':Mxx, 'Myy':Myy, 'Mxy':Mxy}
 
 
 def getDonutConfig(ref):
@@ -39,12 +78,25 @@ def getDonutConfig(ref):
     return donutConfig
 
 
-def cutoutDonut(x, y, icExp, stampSize):
-    """!Cut out a postage stamp image of a single donut
+def donutCoords(icSrc, donutSrc):
+    """ Get coordinates of donuts from join of icSrc and donutSrc catalogs
+    Return value is numpy array with shape [ndonuts, 2]
+    """
+    out = []
+    for record in donutSrc:
+        icRecord = icSrc.find(record.getId())
+        out.append((icRecord['base_FPPosition_x'], icRecord['base_FPPosition_y']))
+    if len(out) == 0:
+        return np.empty((0,2), dtype=float)
+    return np.vstack(out)
+
+
+def getCutout(x, y, exposure, stampSize):
+    """!Cut out a postage stamp image from an exposure
 
     @param x  X-coordinate of postage stamp center
     @param y  Y-coordinate of postage stamp center
-    @param icExp  Exposure from which to cutout stamp.
+    @param exposure  Exposure from which to cutout stamp.
     @param stampSize  Size of cutout.
     @returns  MaskedImage with cutout.
     """
@@ -52,8 +104,8 @@ def cutoutDonut(x, y, icExp, stampSize):
     box = afwGeom.Box2I(point, point)
     box.grow(afwGeom.Extent2I(stampSize//2, stampSize//2))
 
-    subMaskedImage = icExp.getMaskedImage().Factory(
-        icExp.getMaskedImage(),
+    subMaskedImage = exposure.getMaskedImage().Factory(
+        exposure.getMaskedImage(),
         box,
         afwImage.PARENT
     )
@@ -63,7 +115,7 @@ def cutoutDonut(x, y, icExp, stampSize):
 def markGoodDonuts(icSrc, icExp, stampSize, ignoredPixelMask):
     good = []
     for donut in icSrc:
-        subMaskedImage = cutoutDonut(
+        subMaskedImage = getCutout(
             donut.getX(), donut.getY(), icExp, stampSize)
         mask = subMaskedImage.getMask()
         bitmask = 0x0
@@ -108,7 +160,7 @@ def _getGoodFFTSize(n):
 
 def _getJacobian(detector, point):
     # Converting from PIXELS to TAN_PIXELS
-    transform = detector.getTransform(cameraGeom.PIXELS, cameraGeom.TAN_PIXELS)
+    transform = detector.getTransform(afwCameraGeom.PIXELS, afwCameraGeom.TAN_PIXELS)
     return transform.getJacobian(point)
 
 
@@ -274,3 +326,181 @@ def rotateSrcCoords(donutSrc, theta):
         r.set(newFpKey, newFps[i].astype(np.float64))
 
     return newDonutSrc
+
+
+def getDonut(icRecord, icExp, donutConfig):
+    """Return numpy array containing donut cutout.
+    """
+    nquarter = icExp.getDetector().getOrientation().getNQuarter()
+    if donutConfig.flip:
+        nquarter += 2
+
+    maskedImage = getCutout(icRecord.getX(), icRecord.getY(), icExp,
+                            donutConfig.stampSize)
+    maskedImage = afwMath.rotateImageBy90(maskedImage, nquarter)
+    return maskedImage.getImage().getArray()
+
+
+def getModel(donutRecord, icRecord, icExp, donutConfig, camera):
+    """Return numpy array containing donut model.
+    """
+    pixelScale = icExp.getWcs().pixelScale()
+
+    wavelength = donutConfig.wavelength
+    if wavelength is None:
+        wavelength = icExp.getFilter().getFilterProperty().getLambdaEff()
+    jmax = donutConfig.jmaxs[-1]
+
+    nquarter = icExp.getDetector().getOrientation().getNQuarter()
+    if donutConfig.flip:
+        nquarter += 2
+    visitInfo = icExp.getInfo().getVisitInfo()
+
+    pupilSize, pupilNPix = _getGoodPupilShape(
+        camera.telescopeDiameter, wavelength, donutConfig.stampSize*pixelScale)
+    pupilFactory = camera.getPupilFactory(visitInfo, pupilSize, pupilNPix)
+
+    fpX = icRecord['base_FPPosition_x']
+    fpY = icRecord['base_FPPosition_y']
+    pupil = pupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
+
+    detector = icExp.getDetector()
+    point = afwGeom.Point2D(icRecord.getX(), icRecord.getY())
+    if donutConfig.doJacobian:
+        jacobian = _getJacobian(detector, point)
+        # Need to apply quarter rotations to jacobian
+        th = np.pi/2*nquarter
+        sth, cth = np.sin(th), np.cos(th)
+        rot = np.array([[cth, sth], [-sth, cth]])
+        jacobian = np.dot(rot.T, np.dot(jacobian, rot))
+    else:
+        jacobian = np.eye(2)
+
+    params = {}
+    keys = ['r0', 'dx', 'dy', 'flux']
+    for j in range(4, jmax + 1):
+        keys.append('z{}'.format(j))
+    for k in keys:
+        params[k] = donutRecord['zfit_jmax{}_{}'.format(jmax, k)]
+    zfitter = ZernikeFitter(
+        jmax,
+        wavelength,
+        pupil,
+        camera.telescopeDiameter
+    )
+
+    model = zfitter.constructModelImage(
+        params = params,
+        pixelScale = pixelScale.asArcseconds(),
+        jacobian = jacobian,
+        shape = (donutConfig.stampSize, donutConfig.stampSize))
+
+    return model
+
+
+def getWavefront(records, exposure, donutConfig, plotConfig, camera):
+    """Return numpy array containing wavefront model.
+    """
+    wavelength = donutConfig.wavelength
+    if wavelength is None:
+        wavelength = exposure.getFilter().getFilterProperty().getLambdaEff()
+
+    jmax = donutConfig.jmaxs[-1]
+
+    nquarter = exposure.getDetector().getOrientation().getNQuarter()
+    if donutConfig.flip:
+        nquarter += 2
+    visitInfo = exposure.getInfo().getVisitInfo()
+
+    pupilSize, pupilNPix = _getGoodPupilShape(
+        camera.telescopeDiameter, wavelength,
+        plotConfig.stampSize*plotConfig.pixelScale*afwGeom.arcseconds)
+    pupilFactory = camera.getPupilFactory(visitInfo, pupilSize, pupilNPix)
+
+    # extra should be representative of both extra and intra
+    fpX = records['extraIcRecord']['base_FPPosition_x']
+    fpY = records['extraIcRecord']['base_FPPosition_y']
+    pupil = pupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
+
+    params = {}
+    for k in ['z{}'.format(j) for j in range(4, jmax + 1)]:
+        params[k] = 0.5*(
+            records['extraDonutRecord']['zfit_jmax{}_{}'.format(jmax, k)] +
+            records['intraDonutRecord']['zfit_jmax{}_{}'.format(jmax, k)]
+        )
+
+    zfitter = ZernikeFitter(
+        jmax,
+        wavelength,
+        pupil,
+        camera.telescopeDiameter,
+    )
+
+    wf = zfitter.constructWavefrontImage(params=params)
+    wf = wf[wf.shape[0]//4:3*wf.shape[0]//4, wf.shape[0]//4:3*wf.shape[0]//4]
+
+    return wf
+
+
+def getPsf(records, extraIcExp, donutConfig, plotConfig, camera):
+    # extra should be representative of both extra and intra
+    icRecord = records['extraIcRecord']
+
+    wavelength = donutConfig.wavelength
+    if wavelength is None:
+        wavelength = extraIcExp.getFilter().getFilterProperty().getLambdaEff()
+
+    jmax = donutConfig.jmaxs[-1]
+
+    nquarter = extraIcExp.getDetector().getOrientation().getNQuarter()
+    if donutConfig.flip:
+        nquarter += 2
+    visitInfo = extraIcExp.getInfo().getVisitInfo()
+
+    pupilSize, pupilNPix = _getGoodPupilShape(
+        camera.telescopeDiameter, wavelength,
+        plotConfig.stampSize*plotConfig.pixelScale*afwGeom.arcseconds)
+    pupilFactory = camera.getPupilFactory(visitInfo, pupilSize, pupilNPix)
+
+    fpX = icRecord['base_FPPosition_x']
+    fpY = icRecord['base_FPPosition_y']
+    pupil = pupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
+
+    detector = extraIcExp.getDetector()
+    point = afwGeom.Point2D(icRecord.getX(), icRecord.getY())
+    if donutConfig.doJacobian:
+        jacobian = _getJacobian(detector, point)
+        # Need to apply quarter rotations to jacobian
+        th = np.pi/2*nquarter
+        sth, cth = np.sin(th), np.cos(th)
+        rot = np.array([[cth, sth], [-sth, cth]])
+        jacobian = np.dot(rot.T, np.dot(jacobian, rot))
+    else:
+        jacobian = np.eye(2)
+
+    params = {}
+    for k in ['z{}'.format(j) for j in range(4, jmax + 1)]:
+        params[k] = 0.5*(
+            records['extraDonutRecord']['zfit_jmax{}_{}'.format(jmax, k)] +
+            records['intraDonutRecord']['zfit_jmax{}_{}'.format(jmax, k)]
+        )
+    params['dx'] = 0.0
+    params['dy'] = 0.0
+    params['flux'] = 1.0
+
+    zfitter = ZernikeFitter(
+        jmax,
+        wavelength,
+        pupil,
+        camera.telescopeDiameter,
+        jacobian = jacobian
+    )
+
+    psf = zfitter.constructModelImage(
+        params = params,
+        pixelScale = plotConfig.pixelScale,
+        jacobian = jacobian,
+        shape = (plotConfig.stampSize, plotConfig.stampSize)
+    )
+
+    return psf

@@ -1,0 +1,113 @@
+# Processing scripts
+####################
+
+# First process exposures of interest using normal singleFrameDriver (intrafocal/extrafocal, plus
+# in-focus exposures in each triplet).  Use a special config file for the donuts, but not for the
+# in-focus exposures.
+
+singleFrameDriver.py /tigress/HSC/HSC --rerun jemeyers/testDonutSFD --job donutSFD --time 30000 --cores 112 --batch-type slurm --mpiexec="-bind-to socket" --id visit="69028^69030" -C SFDDonutConfig.py
+singleFrameDriver.py /tigress/HSC/HSC --rerun jemeyers/testFocalSFD --job focalSFD --time 30000 --cores 112 --batch-type slurm --mpiexec="-bind-to socket" --id visit="69026"
+
+# Next we use donutDriver to fit the forward model to detected donuts.  Note that we separate
+# intrafocal and extrafocal, since the range of valid Z4 coefficients will be different for each.
+
+donutDriver.py /tigress/HSC/HSC --rerun jemeyers/testDonutSFD:jemeyers/testExtraDD --job ex --time 70000 --cores 112 --batch-type slurm --mpiexec="-bind-to socket" --id visit=69028 -C extra_noJ_donutDriverConfig.py
+donutDriver.py /tigress/HSC/HSC --rerun jemeyers/testDonutSFD:jemeyers/testIntraDD --job in --time 70000 --cores 112 --batch-type slurm --mpiexec="-bind-to socket" --id visit=69030 -C intra_noJ_donutDriverConfig.py
+
+
+# Analysis scripts
+##################
+
+# Single Object Analyses
+# ======================
+# At this point, we can run several different levels of analysis to see how well the fits did.  The
+# first scripts examine the donut and fits individually:
+
+# DonutSelectionAnalysisTask
+# --------------------------
+# Outputs images of donuts with a different colorbar depending on whether or not that donut was
+# selected for fitting.
+
+donutSelectionAnalysis.py /tigress/HSC/HSC --rerun jemeyers/testIntraDD:jemeyers/testPlot --id visit=69030 ccd=50 --no-versions
+
+
+# DonutGoodnessOfFitAnalysisTask
+# ------------------------------
+# Outputs images of donut, model, residual for fitted donuts
+
+donutGoodnessOfFitAnalysis.py /tigress/HSC/HSC --rerun jemeyers/testIntraDD:jemeyers/testPlot --id visit=69030 ccd=50 --no-versions
+
+
+# Single Exposure Analyses
+# ========================
+# The next set of scripts analyze entire exposures, not just individual donuts.  As such, they don't
+# accept the ccd part of their id argument, just the visit part.
+
+# FitParamAnalysisTask
+# --------------------
+# Outputs scatter plot of fitting parameters (r0, and Zernike coefficients) as function of focal
+# plane position.
+
+donutFitParamAnalysis.py /tigress/HSC/HSC --rerun jemeyers/testIntraDD:jemeyers/testPlot --id visit=69030 --no-versions
+
+# StampAnalysis
+# -------------
+# Makes plot of donuts, models, and residuals across the focal plane.
+
+donutStampAnalysis.py /tigress/HSC/HSC --rerun jemeyers/testIntraDD:jemeyers/testPlot --id visit=69030 --no-versions
+
+# StampCcdAnalysis
+# ----------------
+# Same as above, but bin by CCD instead of uniformly across the focal plane.
+
+donutStampCcdAnalysis.py /tigress/HSC/HSC --rerun jemeyers:testIntraDD:jemeyers/testPlot --id visit=69030 --no-versions
+
+
+# Exposure Pair Analyses
+# ======================
+# The next set of scripts analyze two exposures at a time, one intrafocal and the other extrafocal.
+# This requires a special rerun access pattern.  Basically, you specify the extrafocal rerun as the
+# normal input, but then specify the intrafocal rerun with an additional --intraRerun argument.  You
+# also need to specify both --intraId and --extraId instead of just --id.
+
+# ZernikeParamAnalysis
+# --------------------
+# Similar to FitParamAnalysis, but for the predicted in-focus Zernike coefficients
+
+donutZernikeParamAnalysis.py /tigress/HSC/HSC --rerun jemeyers/testExtraDD:jemeyers/testPlot --intraRerun jemeyers/testIntraDD --extraId visit=69028 --intraId visit=69030 --no-versions
+
+
+# PairStampAnalysis
+# -----------------
+# Using both intra and extra focal donuts, make plots showing field-of-view dependence of the
+# inferred optical PSF and wavefront.
+
+donutPairStampAnalysis.py /tigress/HSC/HSC --rerun jemeyers/testExtraDD:jemeyers/testPlot --intraRerun jemeyers/testIntraDD --extraId visit=69028 --intraId visit=69030 --no-versions
+
+# PairStampCcdAnalysis
+# -----------------
+# Same as above, but bin by CCD instead of uniformly across the focal plane.
+
+donutPairStampCcdAnalysis.py /tigress/HSC/HSC --rerun jemeyers/testExtraDD:jemeyers/testPlot --intraRerun jemeyers/testIntraDD --extraId visit=69028 --intraId visit=69030 --no-versions
+
+
+# ZernikePyramid
+# --------------
+# Make an array of scatter plots, organized in a pyramid, that show the prediction for the in focus
+# Zernike coefficients.
+
+donutZernikePyramidAnalysis.py /tigress/HSC/HSC --rerun jemeyers/testExtraDD:jemeyers/testPlot --intraRerun jemeyers/testIntraDD --extraId visit=69028 --intraId visit=69030 --no-versions
+
+
+# Exposure Triplet Analyses
+# =========================
+# The final set of analysis scripts require triplets of exposures: one extrafocal, one intrafocal,
+# and one in-focus.  The exposures should be at the same point of the sky, and contemporaneous.
+# Like the pair analyses, the triplet analyses have special input id and rerun arguments.
+
+# TripletWhiskerAnalysis
+# ----------------------
+# Makes a pair of whisker plots comparing the predicted ellipticity given donut images to the
+# observed ellipticity of the in-focus exposure.
+
+donutTripletWhiskerAnalysis.py /tigress/HSC/HSC --rerun jemeyers/testFocalSFD:jemeyers/testPlot --extraRerun jemeyers/testExtraDD --intraRerun jemeyers/testIntraDD --focalId visit=69026 --extraId visit=69028 --intraId visit=69030 --no-versions

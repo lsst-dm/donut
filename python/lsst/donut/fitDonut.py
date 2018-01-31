@@ -34,7 +34,7 @@ import lsst.afw.image as afwImage
 import lsst.afw.geom as afwGeom
 from .zernikeFitter import ZernikeFitter
 from .selectDonut import SelectDonutTask
-from .utilities import _getGoodPupilShape, cutoutDonut, _getJacobian
+from .utilities import _getGoodPupilShape, getCutout, _getJacobian
 
 display = lsstDebug.Info(__name__).display
 
@@ -412,7 +412,7 @@ class FitDonutTask(pipeBase.CmdLineTask):
         fpY = record['base_FPPosition_y']
         self.log.info("Donut is at {}, {}".format(fpX, fpY))
         subMaskedImage = afwMath.rotateImageBy90(
-            cutoutDonut(imX, imY, icExp, self.config.stampSize),
+            getCutout(imX, imY, icExp, self.config.stampSize),
             nquarter)
         pupil = pupilFactory.getPupil(afwGeom.Point2D(fpX, fpY))
 

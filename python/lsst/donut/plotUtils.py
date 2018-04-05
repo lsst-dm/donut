@@ -26,7 +26,6 @@ import os
 
 import numpy as np
 import matplotlib.patches as patches
-from matplotlib.figure import Figure
 
 import lsst.afw.cameraGeom as afwCameraGeom
 from lsst.daf.persistence.safeFileIo import safeMakeDir

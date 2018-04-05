@@ -22,8 +22,6 @@
 #
 from __future__ import absolute_import, division, print_function
 
-import os
-
 import numpy as np
 import galsim
 
@@ -59,7 +57,7 @@ def lodToDol(lod):
 def getMoments(arr, pixelScale):
     try:
         mom = galsim.hsm.FindAdaptiveMom(galsim.Image(arr))
-    except:
+    except RuntimeError:
         nan = float('nan')
         return {'e1':nan, 'e2':nan, 'rsqr':nan, 'Mxx':nan, 'Myy':nan, 'Mxy':nan}
     e1, e2 = mom.observed_shape.e1, mom.observed_shape.e2

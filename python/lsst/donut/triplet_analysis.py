@@ -24,7 +24,6 @@ from __future__ import absolute_import, division, print_function
 
 import os
 
-import galsim
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.pyplot import subplots

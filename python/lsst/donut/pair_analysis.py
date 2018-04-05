@@ -33,13 +33,11 @@ from matplotlib.gridspec import GridSpec
 from matplotlib.pyplot import subplots
 
 import lsst.pex.config as pexConfig
-from lsst.daf.persistence.safeFileIo import safeMakeDir
 import lsst.afw.cameraGeom as afwCameraGeom
 # from lsst.afw.geom import arcseconds, Point2D
 
 from .runner import PairBaseConfig, PairBaseTask
-from .zernikeFitter import ZernikeFitter
-from .utilities import getDonutConfig, _getGoodPupilShape, _getJacobian
+from .utilities import getDonutConfig
 from .utilities import _noll_to_zern
 from .utilities import getPsf, getWavefront
 from .plotUtils import getPlotDir, plotCameraOutline

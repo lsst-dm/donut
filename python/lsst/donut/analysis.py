@@ -32,16 +32,11 @@ from matplotlib.pyplot import subplots
 
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
-import lsst.afw.geom as afwGeom
-import lsst.afw.math as afwMath
 import lsst.afw.cameraGeom as afwCameraGeom
-from lsst.daf.persistence.safeFileIo import safeMakeDir
 from lsst.daf.persistence import NoResults
 from lsst.pipe.drivers.utils import getDataRef, ButlerTaskRunner
-from .zernikeFitter import ZernikeFitter
 from .utilities import first
-from .utilities import getCutout, _getGoodPupilShape
-from .utilities import _getJacobian, getDonutConfig
+from .utilities import getDonutConfig
 from .utilities import getDonut, getModel
 
 from .plotUtils import getPlotDir, plotCameraOutline
@@ -75,8 +70,6 @@ class SelectionAnalysisTask(pipeBase.CmdLineTask):
         self.log.info("Found {} donuts to plot".format(len(icSrc)))
         icExp = sensorRef.get("icExp")
 
-        x = icSrc.getX()
-        y = icSrc.getY()
         s2n = (icSrc['base_CircularApertureFlux_25_0_flux'] /
                icSrc['base_CircularApertureFlux_25_0_fluxSigma'])
 
@@ -169,7 +162,6 @@ class GoodnessOfFitAnalysisTask(pipeBase.CmdLineTask):
         pixelScale = icExp.getWcs().pixelScale()
         donutExtent = [0.5*donutConfig.stampSize*pixelScale.asArcseconds()*e
                        for e in [-1, 1, -1, 1]]
-        wfExtent = [0.5*camera.telescopeDiameter*e for e in [-1, 1, -1, 1]]
         kwargs = {'cmap':'viridis', 'interpolation':'nearest', 'extent':donutExtent}
         residKwargs = dict(kwargs)
         residKwargs['cmap'] = 'Spectral_r'
@@ -239,7 +231,6 @@ class FitParamAnalysisTask(pipeBase.CmdLineTask):
             sensorRef = getDataRef(butler, dataId)
             donutSrc = sensorRef.get("donutSrc")
             icSrc = sensorRef.get("icSrc")
-            icExp = sensorRef.get("icExp")
             x.extend([icSrc.find(donut.getId())['base_FPPosition_x'] for donut in donutSrc])
             y.extend([icSrc.find(donut.getId())['base_FPPosition_y'] for donut in donutSrc])
             for k, v in iteritems(vals):

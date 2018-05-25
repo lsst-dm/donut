@@ -1,7 +1,11 @@
 import numpy as np
+import lmfit
+
+import galsim
 from galsim.zernike import Zernike, zernikeRotMatrix
 from sklearn.decomposition import PCA
 
+import lsst.afw.geom as afwGeom
 
 # http://stackoverflow.com/a/6849299
 class lazy_property(object):
@@ -709,6 +713,7 @@ class WFFit:
 
         return out
 
+
 class WFFoVFitter:
     """Class to use to fit the field-of-view dependence of measured
     Zernike coefficients, presumably from donut images.
@@ -785,6 +790,10 @@ class WFFoVFitter:
 
         return wffit
 
+    def _getDesignMatrix(self, j, cat, focalRadius, ccdRadius, ccdCenter):
+        cfg = self.config
+        return WFDesignMatrix(cfg, cat, j, focalRadius, ccdRadius, ccdCenter)
+
     def _fitJ(self, j, cat, wffit):
         """Fit submodel.
 
@@ -821,8 +830,14 @@ class WFFoVFitter:
             if j+i <= cfg.jMaxVisit and cfg.zeroVisitSum:
                 a = np.hstack([a, [0]*cfg.kMaxVisit])
 
-        design = WFDesignMatrix(
-            cfg, cat, j, wffit.focalRadius, wffit.ccdRadius, wffit.ccdCenter)
+        design = self._getDesignMatrix(
+            j, cat,
+            wffit.focalRadius,
+            wffit.ccdRadius,
+            wffit.ccdCenter
+        )
+        # design = WFDesignMatrix(
+        #     cfg, cat, j, wffit.focalRadius, wffit.ccdRadius, wffit.ccdCenter)
         result, res, rank, s = np.linalg.lstsq(design.array, a, rcond=1e-8)
 
         # Extract results...
@@ -929,6 +944,12 @@ class WFFoVPCAPredictor:
             Pupil Zernike coefficients of visit component of wavefront (in
             telescope coordinates) for each entry in cat.
         """
+        if 'visit' in cat.colnames:
+            if len(np.unique(cat['visit'])) > 1:
+                import warnings
+                warnings.warn(
+                    "Multiple visit in getVisitWF is likely an error")
+
         cfg = self.config
 
         x = np.atleast_1d(cat['x'])
@@ -964,9 +985,15 @@ class WFFoVPCAPredictor:
             Pupil Zernike coefficients of wavefront (in telescope
             coordinates) for each entry in cat.
         """
-        cfg = self.config
-        nDonut = len(cat)
+        if 'visit' in cat.colnames:
+            if len(np.unique(cat['visit'])) > 1:
+                import warnings
+                warnings.warn(
+                    "Multiple visit in getVisitWF is likely an error")
 
+        cfg = self.config
+
+        nDonut = len(cat)
         out = np.zeros((nDonut, cfg.jMax+1), dtype=float)
         out[:, :cfg.jMaxTel+1] += self.getTelWF(cat)
         out[:, :cfg.jMaxCCD+1] += self.getCCDWF(cat)
@@ -996,3 +1023,174 @@ class WFFoVPCAPredictor:
         for i, visit in enumerate(wVisit):
             out[i] = np.dot(pcs, visit)
         return out
+
+
+def shapeToMom(shape):
+    r2 = shape.moments_sigma**2
+    e1 = shape.observed_shape.g1
+    e2 = shape.observed_shape.g2
+
+    return dict(Ixx=r2*(1+e1)/2, Iyy=r2*(1-e1)/2, Ixy=e2*r2/2)
+
+
+def getGsWcs(expRecord):
+    bbox = expRecord.getBBox()
+    wcs = expRecord.getWcs()
+    point = afwGeom.Point2D(
+        np.mean(bbox.getCorners(), axis=0)
+    )
+    wcs_affine = wcs.linearizePixelToSky(point, skyUnit=afwGeom.arcseconds)
+    wcs_arr = wcs_affine.getLinear().getMatrix()
+    gs_wcs = galsim.AffineTransform(*wcs_arr.ravel())
+    return gs_wcs
+
+
+class Fitter:
+    def __init__(self, expTable, pixTable, cat, wffit, lam, pupilFactory, nPC,
+                 opticsPupilFactory=None):
+        self.expTable = expTable
+        self.pixTable = pixTable
+        self.cat = cat
+        self.wffit = wffit
+        self.lam = lam
+        self.pupilFactory = pupilFactory
+        self.nPC = nPC
+
+        if opticsPupilFactory is None:
+            opticsPupilFactory = pupilFactory
+        self.opticsPupilFactory = opticsPupilFactory
+
+        self.predictor = WFFoVPCAPredictor(wffit, n_components=nPC)
+
+    def initParams(self):
+        params = lmfit.Parameters()
+        params.add('r0', 0.2, min=0.05, max=0.4)
+        params.add('g1', 0.01, min=-0.1, max=0.1)
+        params.add('g2', 0.01, min=-0.1, max=0.1)
+        for i in range(self.nPC):
+            params.add('pc{}'.format(i), 0.1)
+        self.params = params
+
+    def setParams(self, params):
+        self.params = params
+
+    def dataOne(self, idx):
+        idx = int(idx)
+        array = self.pixTable[idx]['pix'].reshape(33, 33)
+        gs_wcs = getGsWcs(self.expTable[idx])
+        return galsim.Image(array, wcs=gs_wcs)
+
+    def fit(self, **kwargs):
+        return lmfit.minimize(self.resid, self.params, **kwargs)
+
+    def getOpt(self, idx):
+        v = self.params.valuesdict()
+
+        coefs = np.array([v['pc{}'.format(i)] for i in range(self.nPC)])
+        star = self.cat[idx:idx+1]
+        wf = np.squeeze(self.predictor.getWF(star, coefs))
+
+        pupil = self.pupilFactory.getPupil(afwGeom.Point2D(star['x'], star['y']))
+        aper = galsim.Aperture(
+            self.pupilFactory.telescopeDiameter,
+            pupil_plane_im = pupil.illuminated.astype(np.int16),
+            pupil_plane_scale = pupil.scale,
+            pupil_plane_size = pupil.size
+        )
+        optPSF = galsim.OpticalPSF(
+                lam=self.lam, diam=self.opticsPupilFactory.telescopeDiameter,
+                aper=aper, aberrations=wf
+        )
+        return optPSF
+
+    def modelOne(self, idx):
+        v = self.params.valuesdict()
+
+        atmPSF = galsim.Kolmogorov(lam=self.lam, r0=v['r0'])
+        atmPSF = atmPSF.shear(g1=v['g1'], g2=v['g2'])
+
+        coefs = np.array([v['pc{}'.format(i)] for i in range(self.nPC)])
+        star = self.cat[idx:idx+1]
+        wf = np.squeeze(self.predictor.getWF(star, coefs))
+
+        pupil = self.pupilFactory.getPupil(afwGeom.Point2D(star['x'], star['y']))
+        aper = galsim.Aperture(
+            self.pupilFactory.telescopeDiameter,
+            pupil_plane_im = pupil.illuminated.astype(np.int16),
+            pupil_plane_scale = pupil.scale,
+            pupil_plane_size = pupil.size
+        )
+        optPSF = galsim.OpticalPSF(
+                lam=self.lam, diam=self.opticsPupilFactory.telescopeDiameter,
+                aper=aper, aberrations=wf
+        )
+        # optPSF is in CCD coordinates.  We need to unshear this PSF by the wcs.
+        # We don't want to change the size though, just apply the distortion part.
+        psf = galsim.Convolve(optPSF, atmPSF)
+
+        gs_wcs = getGsWcs(self.expTable[int(idx)])
+        return psf.drawImage(nx=33, ny=33, wcs=gs_wcs)
+
+    def atmModelOne(self, idx):
+        v = self.params.valuesdict()
+
+        atmPSF = galsim.Kolmogorov(lam=self.lam, r0=v['r0'])
+        atmPSF = atmPSF.shear(g1=v['g1'], g2=v['g2'])
+
+        gs_wcs = getGsWcs(self.expTable[int(idx)])
+        return atmPSF.drawImage(nx=33, ny=33, wcs=gs_wcs)
+
+    def opticsOne(self, idx):
+        v = self.params.valuesdict()
+
+        coefs = np.array([v['pc{}'.format(i)] for i in range(self.nPC)])
+        star = self.cat[idx:idx+1]
+        wf = np.squeeze(self.predictor.getWF(star, coefs))
+
+        pupil = self.opticsPupilFactory.getPupil(afwGeom.Point2D(star['x'], star['y']))
+        aper = galsim.Aperture(
+            self.opticsPupilFactory.telescopeDiameter,
+            pupil_plane_im = pupil.illuminated.astype(np.int16),
+            pupil_plane_scale = pupil.scale,
+            pupil_plane_size = pupil.size
+        )
+        optPSF = galsim.OpticalPSF(
+                lam=self.lam, diam=self.opticsPupilFactory.telescopeDiameter,
+                aper=aper, aberrations=wf
+        )
+
+        return optPSF.drawImage(nx=64, ny=64, scale=0.0125)
+
+    def zernikeOne(self, idx):
+        v = self.params.valuesdict()
+
+        coefs = np.array([v['pc{}'.format(i)] for i in range(self.nPC)])
+        star = self.cat[idx:idx+1]
+        wf = np.squeeze(self.predictor.getWF(star, coefs))
+        return wf
+
+    def chisqOne(self, idx):
+        return np.sum(self.chiOne(idx)**2)
+
+    def chiOne(self, idx):
+        # Just going to use 2nd moments for now, so don't need to deal with flux, centroid.
+        dataImg = self.dataOne(idx)
+        modelImg = self.modelOne(idx)
+        dataMom = shapeToMom(galsim.hsm.FindAdaptiveMom(dataImg))
+        modelMom = shapeToMom(galsim.hsm.FindAdaptiveMom(modelImg))
+
+        return (dataMom['Ixx'] - modelMom['Ixx'],
+                dataMom['Ixy'] - modelMom['Ixy'],
+                dataMom['Iyy'] - modelMom['Iyy'])
+
+    def chi(self):
+        return np.hstack([self.chiOne(i) for i in range(len(self.cat))])
+
+    def resid(self, params):
+        self.setParams(params)
+        chi = self.chi()
+        params.pretty_print()
+        # for k, v in params.valuesdict().items():
+        #     print("{:10a} {:8.3f}".format(k, v))
+        print("chi2 {}".format(np.sum(chi**2)))
+        return chi

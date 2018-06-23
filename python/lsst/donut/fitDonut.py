@@ -270,7 +270,7 @@ class FitDonutTask(pipeBase.CmdLineTask):
         if icExp is None:
             icExp = sensorRef.get("icExp")
 
-        pixelScale = icExp.getWcs().pixelScale()
+        pixelScale = icExp.getWcs().getPixelScale()
         self.log.info("display is {}".format(display))
         wavelength = self.getWavelength(icExp)
 

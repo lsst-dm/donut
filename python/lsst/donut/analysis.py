@@ -58,7 +58,7 @@ class SelectionAnalysisTask(pipeBase.CmdLineTask):
     def __init__(self, *args, **kwargs):
         pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
 
-    def run(self, sensorRef):
+    def runDataRef(self, sensorRef):
         dataId = sensorRef.dataId
         visit = dataId['visit']
         ccd = dataId['ccd']
@@ -144,7 +144,7 @@ class GoodnessOfFitAnalysisTask(pipeBase.CmdLineTask):
     def __init__(self, *args, **kwargs):
         pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
 
-    def run(self, sensorRef):
+    def runDataRef(self, sensorRef):
         dataId = sensorRef.dataId
         visit = dataId['visit']
         ccd = dataId['ccd']
@@ -216,7 +216,7 @@ class FitParamAnalysisTask(pipeBase.CmdLineTask):
     def __init__(self, *args, **kwargs):
         pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
 
-    def run(self, expRef, butler):
+    def runDataRef(self, expRef, butler):
         """Process a single exposure, with scatter-gather-scatter using MPI.
         """
         dataIdList = dict([(ccdRef.get("ccdExposureId"), ccdRef.dataId)
@@ -305,7 +305,7 @@ class StampCcdAnalysisTask(pipeBase.CmdLineTask):
     def __init__(self, *args, **kwargs):
         pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
 
-    def run(self, expRef, butler):
+    def runDataRef(self, expRef, butler):
         """Make a stamp analysis image for a single exposure, binned by CCD.
         """
         dataIdList = dict([(ccdRef.get("ccdExposureId"), ccdRef.dataId)
@@ -461,7 +461,7 @@ class StampAnalysisTask(pipeBase.CmdLineTask):
     def __init__(self, *args, **kwargs):
         pipeBase.CmdLineTask.__init__(self, *args, **kwargs)
 
-    def run(self, expRef, butler):
+    def runDataRef(self, expRef, butler):
         """Make a stamp analysis image for a single exposure
         """
         dataIdList = dict([(ccdRef.get("ccdExposureId"), ccdRef.dataId)

@@ -59,7 +59,7 @@ class TripletWhiskerTask(TripletBaseTask):
     def __init__(self, *args, **kwargs):
         TripletBaseTask.__init__(self, *args, **kwargs)
 
-    def run(self, focalRef, extraRef=None, intraRef=None):
+    def runDataRef(self, focalRef, extraRef=None, intraRef=None):
         """Process an exposure triplet consisting of an in-focus exposure, an
         extra-focal exposure, and an intra-focal exposure.
         """

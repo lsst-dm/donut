@@ -56,7 +56,7 @@ class ZernikeParamAnalysisTask(PairBaseTask):
     def __init__(self, *args, **kwargs):
         PairBaseTask.__init__(self, *args, **kwargs)
 
-    def run(self, extraRef, intraRef=None):
+    def runDataRef(self, extraRef, intraRef=None):
         """Process a pair of exposures.
         """
         extraVisit = extraRef.dataId['visit']
@@ -128,7 +128,7 @@ class PairStampCcdAnalysisTask(PairBaseTask):
     def __init__(self, *args, **kwargs):
         PairBaseTask.__init__(self, *args, **kwargs)
 
-    def run(self, extraRef, intraRef=None):
+    def runDataRef(self, extraRef, intraRef=None):
         """Process a pair of exposures.  Producing output binned by CCD.
         """
         extraVisit = extraRef.dataId['visit']
@@ -250,7 +250,7 @@ class PairStampAnalysisTask(PairBaseTask):
     def __init__(self, *args, **kwargs):
         PairBaseTask.__init__(self, *args, **kwargs)
 
-    def run(self, extraRef, intraRef=None):
+    def runDataRef(self, extraRef, intraRef=None):
         """Process a pair of exposures.
         """
         extraVisit = extraRef.dataId['visit']
@@ -397,7 +397,7 @@ class PairZernikePyramidTask(PairBaseTask):
     def __init__(self, *args, **kwargs):
         PairBaseTask.__init__(self, *args, **kwargs)
 
-    def run(self, extraRef, intraRef=None):
+    def runDataRef(self, extraRef, intraRef=None):
         extraVisit = extraRef.dataId['visit']
         self.log.info("Working on extra/intra visits: {}/{}".format(
             extraRef.dataId['visit'], intraRef.dataId['visit']))

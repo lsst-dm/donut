@@ -61,7 +61,7 @@ class DonutDriverTask(BatchParallelTask):
         self.ignoreCcds = set(self.config.ignoreCcdList)
         self.makeSubtask("fitDonut")
 
-    def run(self, sensorRef):
+    def runDataRef(self, sensorRef):
         """Fit a single CCD box of donuts, with scatter-gather-scatter
         using MPI.
         """
@@ -71,4 +71,4 @@ class DonutDriverTask(BatchParallelTask):
             return None
 
         with self.logOperation("processing %s" % (sensorRef.dataId,)):
-            return self.fitDonut.run(sensorRef)
+            return self.fitDonut.runDataRef(sensorRef)

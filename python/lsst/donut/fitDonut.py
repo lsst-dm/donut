@@ -130,7 +130,7 @@ class FitDonutConfig(pexConfig.Config):
 
 
 class FitDonutTask(pipeBase.CmdLineTask):
-    """!Fit a donut images with a wavefront forward model.
+    """!Fit donut images with a wavefront forward model.
 
     @anchor FitDonutTask_
 
@@ -141,10 +141,10 @@ class FitDonutTask(pipeBase.CmdLineTask):
 
     @section donut_FitDonut_IO  Invoking the Task
 
-    This task is normallly invokable as a CmdLineTask, though it can also be
-    invoked as a subtask using the `run` method, in which case a sensorRef and
-    optionally that reference's `icSrc` and `icExp` datasets should be passed
-    as arguments.
+    This task is normallly invokable as a CmdLineTask, though it can
+    also be invoked as a subtask using the `runDataRef` method, in
+    which case a sensorRef and optionally that reference's `icSrc` and
+    `icExp` datasets should be passed as arguments.
 
     @section donut_FitDonut_Config  Configuration parameters
 
@@ -262,7 +262,7 @@ class FitDonutTask(pipeBase.CmdLineTask):
             self.keyDicts.append(keyDict)
 
     @pipeBase.timeMethod
-    def run(self, sensorRef, icSrc=None, icExp=None):
+    def runDataRef(self, sensorRef, icSrc=None, icExp=None):
         """!Fit donuts
         """
         if icSrc is None:
